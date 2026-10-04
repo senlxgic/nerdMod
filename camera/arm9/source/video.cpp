@@ -332,7 +332,7 @@ Result stop(StopReason reason) {
 	fin.droppedFrames = expected > writer.frames() ? expected - writer.frames() : 0;
 	fin.framesDropped = fin.droppedFrames > 2;
 	fin.durationMs = endMs;
-	fin.audioFailed = audioOn && !r.hasAudio;
+	fin.audioFailed = !r.hasAudio; // a microphone is always requested
 	fin.maxWriteMs = writeMsMax;
 	fin.capturedFrames = capturedCount;
 	const u32 frames = writer.frames();

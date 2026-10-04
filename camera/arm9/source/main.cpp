@@ -272,7 +272,11 @@ void showInfoDialog(int page) {
 					uiTextAt(5, 11, line);
 					snprintf(line, sizeof(line), "Buffers: %lu of %d", (unsigned long)r.bufferPeak, rec::slotCount());
 					uiTextAt(5, 12, line);
-					uiTextAt(5, 13, r.hasAudio ? "Mic: Active" : "Mic: No data");
+					if (r.hasAudio)
+						snprintf(line, sizeof(line), "Mic: Active, peak %lu", (unsigned long)audioRec::peakSample());
+					else
+						snprintf(line, sizeof(line), "No microphone data");
+					uiTextAt(5, 13, line);
 				} else {
 					uiTextAt(5, 10, "Record a video first");
 				}

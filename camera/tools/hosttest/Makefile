@@ -1,7 +1,11 @@
-test: test_container test_fps test_audio
+test: test_container test_fps test_audio test_audiofmt
 	./test_container
 	./test_fps
 	./test_audio
+	./test_audiofmt
+
+test_audiofmt: test_audiofmt.cpp ../../arm9/source/audiofmt.h
+	g++ -std=gnu++17 -O1 -g -Wall -Wextra -o $@ test_audiofmt.cpp -lm
 
 test_audio: test_audio.cpp ../../arm9/source/audioring.h
 	g++ -std=gnu++17 -O1 -g -Wall -Wextra -o $@ test_audio.cpp
@@ -13,4 +17,4 @@ test_container: test_container.cpp ../../arm9/source/videoContainer.cpp ../../ar
 	g++ -std=gnu++17 -O1 -g -Wall -Wextra -I. -o $@ test_container.cpp ../../arm9/source/videoContainer.cpp
 
 clean:
-	rm -f test_container test_fps test_audio
+	rm -f test_container test_fps test_audio test_audiofmt

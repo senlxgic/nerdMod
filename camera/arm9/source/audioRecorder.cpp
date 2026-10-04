@@ -3,6 +3,8 @@
 #include <malloc.h>
 #include <string.h>
 
+#include "audiofmt.h"
+
 namespace audioRec {
 
 namespace {
@@ -18,6 +20,9 @@ volatile u32 delivered = 0;
 volatile u32 overrun = 0;
 volatile bool anyData = false;
 volatile bool active = false;
+volatile bool offsetBinary = false;
+volatile u32 peakLevel = 0;
+int startResult = 0;
 
 // Runs when the ARM7 has filled (part of) the microphone buffer. Keep it short: invalidate, copy, bump an index.
 void micCallback(void *completedBuffer, int length) {
@@ -27,6 +32,17 @@ void micCallback(void *completedBuffer, int length) {
 	DC_InvalidateRange(completedBuffer, (u32)length);
 	delivered += bytes;
 	anyData = true;
+
+	// Make the block signed PCM16 whichever way the codec path delivered it (see audiofmt.h).
+	int16_t *samples = (int16_t *)completedBuffer;
+	const u32 count = bytes / 2;
+	if (!offsetBinary && audiofmt::looksOffsetBinary(samples, count))
+		offsetBinary = true;
+	if (offsetBinary)
+		audiofmt::flipToSigned(samples, count);
+	const u32 pk = audiofmt::peak(samples, count);
+	if (pk > peakLevel)
+		peakLevel = pk;
 
 	const u32 used = ringHead - ringTail;
 	if (used + bytes > RING_BYTES) {
@@ -59,9 +75,15 @@ bool start() {
 	ringHead = ringTail = 0;
 	delivered = overrun = 0;
 	anyData = false;
+	offsetBinary = false;
+	peakLevel = 0;
 	active = true;
-	// 12-bit samples come back shifted up to 16-bit PCM
-	soundMicRecord(micBuffer, MIC_BUFFER_BYTES, MicFormat_12Bit, SAMPLE_RATE, micCallback);
+	// libnds' ARM7 picks the DSi codec (TWL) or the classic SPI microphone itself; 12-bit samples are shifted up to PCM16
+	startResult = soundMicRecord(micBuffer, MIC_BUFFER_BYTES, MicFormat_12Bit, SAMPLE_RATE, micCallback);
+	if (startResult < 0) {
+		active = false;
+		return false;
+	}
 	return true;
 }
 
@@ -83,6 +105,9 @@ void release() {
 bool running() { return active; }
 bool gotData() { return anyData; }
 u32 totalDelivered() { return delivered; }
+u32 peakSample() { return peakLevel; }
+bool wasOffsetBinary() { return offsetBinary; }
+int startStatus() { return startResult; }
 u32 overrunBytes() { return overrun; }
 
 u32 available() { return (ringHead - ringTail) & ~1u; }

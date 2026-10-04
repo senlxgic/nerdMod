@@ -34,4 +34,10 @@ u32 overrunBytes();
 // True once the ARM7 has delivered at least one buffer; false after a while means "no microphone data".
 bool gotData();
 
+// Loudest sample seen so far (0..32768), whether the data had to be converted from offset binary, and the value
+// soundMicRecord() returned. Shown on the camera diagnostics page.
+u32 peakSample();
+bool wasOffsetBinary();
+int startStatus();
+
 } // namespace audioRec
