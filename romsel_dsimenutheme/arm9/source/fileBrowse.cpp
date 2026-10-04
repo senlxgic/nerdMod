@@ -297,8 +297,12 @@ void getDirectoryContents(std::vector<DirEntry> &dirContents, const std::vector<
 	} else {
 		backFound = false;
 		int backPos = 0;
+		unsigned bgOpsCounter = 0;
 		while (1) {
-			bgOperations(false);
+			// Background upkeep (clock, battery, volume, SD-eject, music stream) does
+			// not need to run once per directory entry; run it every 8th entry.
+			if ((bgOpsCounter++ & 7) == 0)
+				bgOperations(false);
 
 			// This has to be done *before* readdir, since readdir increments
 			// the internal state's DIR_ENTRY for the next time
