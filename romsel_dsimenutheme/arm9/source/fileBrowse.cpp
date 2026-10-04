@@ -4,8 +4,10 @@
 #include "gameLibrary.h"
 #include "virtualEntries.h"
 #include "graphics/gameArt.h"
+#include "graphics/homeWidgets.h"
 #include "nmdiag.h"
 #include "playStats.h"
+#include "common/nmformat.h"
 #include <algorithm>
 #include <dirent.h>
 #include <math.h>
@@ -699,6 +701,22 @@ void updateBoxArt(void) {
 		const int type = bnrRomType[CURPOS];
 		const char *label = (type >= 0 && type <= 8) ? labels[type] : "";
 		std::string key = tileSelectedPath;
+		{
+			// optional tiny "N plays / time" line from the already loaded play stats (no file access here)
+			const size_t slash = tileSelectedPath.rfind('/');
+			const playstats::Game pg = (ms().homePlayStats && slash != std::string::npos) ? playstats::game(tileSelectedPath.substr(0, slash + 1), tileSelectedPath.substr(slash + 1)) : playstats::Game();
+			if (pg.valid && pg.launches > 0) {
+				char l1[16], l2[16];
+				snprintf(l1, sizeof(l1), "%lu %s", (unsigned long)pg.launches, pg.launches == 1 ? "PLAY" : "PLAYS");
+				nmformat::duration(l2, sizeof(l2), pg.seconds);
+				for (char *c = l2; *c; c++)
+					if (*c >= 'a' && *c <= 'z')
+						*c = (char)(*c - 'a' + 'A');
+				gameArt::setCaption(l1, pg.seconds ? l2 : "");
+			} else {
+				gameArt::setCaption("", "");
+			}
+		}
 		sprintf(boxArtPath, "%s:/_nds/TWiLightMenu/boxart/%s.png", sys().isRunFromSD() ? "sd" : "fat", boxArtFilename);
 		bool shownArt = pathMayExist(boxArtPath) && access(boxArtPath, F_OK) == 0 && gameArt::showBoxArtFile(key, boxArtPath);
 		if (!shownArt && type == 0) {
@@ -3608,6 +3626,7 @@ std::string browseForFile(const std::vector<std::string_view> extensionList) {
 					logPrint("\n");
 				}
 				updateBoxArt();
+				homeWidgets::tick(); // nerdMod: Play Stats (left) and Weather (right) cards on the photo frame
 				if (nmdiag::noticeFramesLeft() > 0) {
 					// temporary: the photo diagnostic could not be written anywhere
 					printSmall(false, 4, 176, "Photo diagnostic write failed", Alignment::left, FontPalette::overlay);

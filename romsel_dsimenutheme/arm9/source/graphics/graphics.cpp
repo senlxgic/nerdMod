@@ -49,6 +49,7 @@
 #include "graphics/ThemeTextures.h"
 #include "common/lodepng.h"
 #include "gameArt.h"
+#include "homeWidgets.h"
 #include "../nmdiag.h"
 #include "common/inifile.h"
 #include "launchDots.h"
@@ -1727,6 +1728,7 @@ bool loadPhoto(const std::string &path, const bool bufferOnly) {
 	}
 
 	gameArt::forget(); // the frame is repainted below: any panel on it is gone
+	homeWidgets::invalidate(); // ... and so is any widget card
 	u16 *bgSubBuffer = tex().beginBgSubModify();
 	u16* bgSubBuffer2 = tex().bgSubBuffer2();
 

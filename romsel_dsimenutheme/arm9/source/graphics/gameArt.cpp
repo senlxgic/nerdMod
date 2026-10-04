@@ -7,6 +7,8 @@
 
 #include "ThemeConfig.h"
 #include "ThemeTextures.h"
+#include "homeWidgets.h"
+#include "common/nmfont.h"
 #include "common/lodepng.h"
 #include "common/tonccpy.h"
 #include "common/twlmenusettings.h"
@@ -177,14 +179,39 @@ void clear() {
 		}
 	}
 	ThemeTextures::commitBgSubModify();
+	homeWidgets::artCleared(); // the left lane is free again: the Play Stats card goes back
+}
+
+static char cap1[12] = "", cap2[12] = "";
+
+void setCaption(const char *line1, const char *line2) {
+	snprintf(cap1, sizeof(cap1), "%.10s", line1 ? line1 : "");
+	snprintf(cap2, sizeof(cap2), "%.10s", line2 ? line2 : "");
 }
 
 static bool present(Cached *c, u32 key) {
-	if (shown && shownKey == key)
+	const u32 shownAs = key ^ hashKey(std::string(cap1) + "|" + cap2);
+	if (shown && shownKey == shownAs)
 		return true; // already on screen
-	blit(c->pixels);
+	if (cap1[0] || cap2[0]) {
+		static u16 withCaption[PX];
+		memcpy(withCaption, c->pixels, sizeof(withCaption));
+		// dark strip over the bottom of the panel, then the text
+		for (int y = PANEL_H - 19; y < PANEL_H - 1; y++)
+			for (int x = 1; x < PANEL_W - 1; x++) {
+				const u16 v = withCaption[y * PANEL_W + x];
+				withCaption[y * PANEL_W + x] = (u16)((((v & 31) >> 1) | ((((v >> 5) & 31) >> 1) << 5) | ((((v >> 10) & 31) >> 1) << 10)) | BIT(15));
+			}
+		if (cap1[0])
+			nmfont::drawCentred(withCaption, PANEL_W, PANEL_H, PANEL_H - 17, cap1, 1, rgb(255, 255, 255));
+		if (cap2[0])
+			nmfont::drawCentred(withCaption, PANEL_W, PANEL_H, PANEL_H - 9, cap2, 1, rgb(190, 215, 240));
+		blit(withCaption);
+	} else {
+		blit(c->pixels);
+	}
 	shown = true;
-	shownKey = key;
+	shownKey = shownAs;
 	return true;
 }
 

@@ -27,6 +27,9 @@ void clear();
 // The photo frame was redrawn from scratch: forget the panel without touching the screen.
 void forget();
 
+// Optional two-line caption (e.g. "12 PLAYS" / "3H 21M") drawn over the bottom of the NEXT panel shown; empty = none.
+void setCaption(const char *line1, const char *line2);
+
 // Each returns true if a panel is now visible. `key` identifies the tile (an unchanged key is not redrawn).
 bool showBoxArtFile(const std::string &key, const char *pngPath);
 bool showIcon(const std::string &key, const char *romPath, const char *label);
