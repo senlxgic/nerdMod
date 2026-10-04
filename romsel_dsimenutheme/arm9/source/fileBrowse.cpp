@@ -9,6 +9,7 @@
 #include <sstream>
 #include <stdio.h>
 #include <string>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <vector>
 
@@ -3257,6 +3258,197 @@ bool setDefaultDirectory(std::string_view directory_path)
 	return true;
 }
 
+
+// ---- nerdMod: tile context menu (UP on a tile) ------------------------------------------------------------
+// A small dialog in the theme's own dialog box and font. It only decides what to do and then either runs a small
+// action itself (info, create/delete folder, browse/library switch) or hands the key of the existing flow back
+// to the caller (A = play/open, X = delete/hide dialog, Y = game settings, "move" = the existing Move-apps flow).
+enum TileMenuId {
+	TM_NONE = 0,
+	TM_PLAY,
+	TM_OPEN,
+	TM_INFO,
+	TM_MOVE,
+	TM_DELETE_HIDE,
+	TM_SETTINGS,
+	TM_DELETE_FOLDER,
+	TM_CREATE_FOLDER,
+	TM_BROWSE,
+	TM_LIBRARY,
+};
+
+struct TileMenuItem {
+	const char *label;
+	TileMenuId id;
+};
+
+// Draws the dialog and returns the chosen item (TM_NONE = cancelled). The dialog box is left closed on return.
+static TileMenuId runTileMenu(const char *title, const TileMenuItem *items, int count) {
+	showdialogbox = true;
+	dbox_showIcon = false;
+	clearText();
+	updateText(false);
+	while (!dboxStopped) {
+		bgOperations(true);
+	}
+
+	std::string head = title;
+	if (head.size() > 38) {
+		head.resize(35);
+		head += "...";
+	}
+	const int lineH = 14;
+	const int top = 80;
+	int sel = 0;
+	TileMenuId result = TM_NONE;
+	bool redraw = true;
+	while (true) {
+		if (redraw) {
+			redraw = false;
+			clearText();
+			printSmall(false, 16, 64, head, Alignment::left, FontPalette::dialog);
+			for (int i = 0; i < count; i++) {
+				printSmall(false, 24, top + i * lineH, (i == sel ? std::string("> ") : std::string("   ")) + items[i].label, Alignment::left, FontPalette::dialog);
+			}
+			printSmall(false, 240, 160, "A OK  B Cancel", Alignment::right, FontPalette::dialog);
+			updateText(false);
+		}
+		scanKeys();
+		const int down = keysDown();
+		const int repeat = keysDownRepeat();
+		bgOperations(true);
+		if (down & KEY_B) {
+			snd().playBack();
+			break;
+		}
+		if (down & KEY_A) {
+			snd().playSelect();
+			result = items[sel].id;
+			break;
+		}
+		if (repeat & KEY_UP) {
+			sel = (sel + count - 1) % count;
+			snd().playSwitch();
+			redraw = true;
+		} else if (repeat & KEY_DOWN) {
+			sel = (sel + 1) % count;
+			snd().playSwitch();
+			redraw = true;
+		}
+		if (down & KEY_TOUCH) {
+			touchPosition t;
+			touchRead(&t);
+			if (t.py >= top && t.py < top + count * lineH && t.px >= 16 && t.px < 240) {
+				const int hit = (t.py - top) / lineH;
+				if (hit == sel) {
+					snd().playSelect();
+					result = items[sel].id;
+					break;
+				}
+				sel = hit;
+				snd().playSwitch();
+				redraw = true;
+			} else if (t.py > 150) {
+				snd().playBack();
+				break;
+			}
+		}
+	}
+	showdialogbox = false;
+	clearText();
+	updateText(false);
+	for (int i = 0; i < 15; i++) {
+		bgOperations(true);
+	}
+	return result;
+}
+
+// Small information / message dialog (A or B or a tap closes it).
+static void showTileMessage(const char *title, const std::vector<std::string> &lines) {
+	showdialogbox = true;
+	dbox_showIcon = false;
+	clearText();
+	updateText(false);
+	while (!dboxStopped) {
+		bgOperations(true);
+	}
+	std::string head = title;
+	if (head.size() > 38) {
+		head.resize(35);
+		head += "...";
+	}
+	printSmall(false, 16, 64, head, Alignment::left, FontPalette::dialog);
+	int y = 82;
+	for (const std::string &l : lines) {
+		std::string t = l;
+		if (t.size() > 40) {
+			t.resize(37);
+			t += "...";
+		}
+		printSmall(false, 16, y, t, Alignment::left, FontPalette::dialog);
+		y += 13;
+	}
+	printSmall(false, 240, 160, "A OK", Alignment::right, FontPalette::dialog);
+	updateText(false);
+	while (true) {
+		scanKeys();
+		bgOperations(true);
+		if (keysDown() & (KEY_A | KEY_B | KEY_TOUCH)) {
+			snd().playBack();
+			break;
+		}
+	}
+	showdialogbox = false;
+	clearText();
+	updateText(false);
+	for (int i = 0; i < 15; i++) {
+		bgOperations(true);
+	}
+}
+
+static std::string formatFileSize(off_t bytes) {
+	char buf[32];
+	if (bytes >= 1024 * 1024)
+		snprintf(buf, sizeof(buf), "%.1f MB", bytes / (1024.0 * 1024.0));
+	else if (bytes >= 1024)
+		snprintf(buf, sizeof(buf), "%.0f KB", bytes / 1024.0);
+	else
+		snprintf(buf, sizeof(buf), "%ld bytes", (long)bytes);
+	return buf;
+}
+
+static const char *romTypeName(int type, bool dsiWare) {
+	switch (type) {
+		case 0: return dsiWare ? "DSiWare" : "Nintendo DS";
+		case 1: return "Game Boy Advance";
+		case 2: return "Game Boy";
+		case 3: return "Game Boy Color";
+		case 4: return "NES / Famicom";
+		case 5: return "Master System";
+		case 6: return "Game Gear";
+		case 7: return "Mega Drive";
+		case 8: return "SNES";
+		case 20: return "Image";
+		default: return "Game";
+	}
+}
+
+// true if the folder has no entries other than . and ..
+static bool folderIsEmpty(const std::string &path) {
+	DIR *d = opendir(path.c_str());
+	if (!d)
+		return false;
+	bool empty = true;
+	while (dirent *e = readdir(d)) {
+		if (strcmp(e->d_name, ".") != 0 && strcmp(e->d_name, "..") != 0) {
+			empty = false;
+			break;
+		}
+	}
+	closedir(d);
+	return empty;
+}
+
 std::string browseForFile(const std::vector<std::string_view> extensionList) {
 	displayNowLoading();
 	gameOrderIniPath = std::string(sys().isRunFromSD() ? "sd" : "fat") + ":/_nds/TWiLightMenu/extras/gameorder.ini";
@@ -3451,6 +3643,163 @@ std::string browseForFile(const std::vector<std::string_view> extensionList) {
 			buttonArrowTouched[0] = ((keysHeld() & KEY_TOUCH) && touch.py > 171 && touch.px < 19);
 			buttonArrowTouched[1] = ((keysHeld() & KEY_TOUCH) && touch.py > 171 && touch.px > 236);
 
+			// nerdMod: UP on a tile opens its context menu (DSi and 3DS themes). It hands back the key of the
+			// existing flow for Play/Open (A), Delete/Hide (X) and Game Settings (Y), and starts the existing
+			// Move-apps flow for Move.
+			bool moveFromMenu = false;
+			if ((pressed & KEY_UP) && (ms().theme == TWLSettings::EThemeDSi || ms().theme == TWLSettings::ETheme3DS) && !dirInfoIniFound && bannerTextShown) {
+				const int tileIdx = CURPOS + PAGENUM * 40;
+				const bool occupied = tileIdx < (int)dirContents[scrn].size();
+				DirEntry *te = occupied ? &dirContents[scrn].at(tileIdx) : nullptr;
+				if (!(te && te->name == "..")) {
+					pressed &= ~KEY_UP;
+					TileMenuItem items[8];
+					int n = 0;
+					const bool canModify = !ms().kioskMode && !ms().preventDeletion;
+					std::string title;
+					if (!te) {
+						title = "Empty slot";
+						if (gameLibraryBrowsing()) {
+							items[n++] = {"Create Folder", TM_CREATE_FOLDER};
+							items[n++] = {"Show Game Library", TM_LIBRARY};
+						} else if (ms().gameLibraryView != TWLSettings::ELibraryFolders) {
+							items[n++] = {"Browse Folders", TM_BROWSE};
+						} else {
+							items[n++] = {"Create Folder", TM_CREATE_FOLDER};
+						}
+					} else if (te->kind == ENTRY_BUILTIN) {
+						title = entryBaseName(te->name);
+						items[n++] = {"Open", TM_OPEN};
+						items[n++] = {"View Info", TM_INFO};
+					} else if (te->isDirectory) {
+						title = te->name;
+						items[n++] = {"Open", TM_OPEN};
+						if (ms().sortMethod == TWLSettings::ESortCustom)
+							items[n++] = {"Move", TM_MOVE};
+						if (canModify) {
+							items[n++] = {"Hide", TM_DELETE_HIDE};
+							items[n++] = {"Delete (empty)", TM_DELETE_FOLDER};
+						}
+					} else {
+						title = entryBaseName(te->name);
+						items[n++] = {"Play", TM_PLAY};
+						items[n++] = {"View Info", TM_INFO};
+						if (ms().sortMethod == TWLSettings::ESortCustom && te->kind != ENTRY_FLATTENED)
+							items[n++] = {"Move", TM_MOVE};
+						if (canModify)
+							items[n++] = {"Delete / Hide", TM_DELETE_HIDE};
+						if (isValid[CURPOS] && !isTwlm[CURPOS] && !ms().kioskMode)
+							items[n++] = {"Game Settings", TM_SETTINGS};
+					}
+					if (gameLibraryBrowsing() && te && n < 8)
+						items[n++] = {"Show Game Library", TM_LIBRARY};
+					else if (!gameLibraryBrowsing() && te && ms().gameLibraryView != TWLSettings::ELibraryFolders && n < 8)
+						items[n++] = {"Browse Folders", TM_BROWSE};
+
+					const TileMenuId choice = runTileMenu(title.c_str(), items, n);
+					bannerTextShown = false; // redraw the tile's title afterwards
+					switch (choice) {
+						case TM_PLAY:
+						case TM_OPEN:
+							bannerTextShown = true;
+							pressed |= KEY_A;
+							break;
+						case TM_DELETE_HIDE:
+							bannerTextShown = true;
+							pressed |= KEY_X; // the existing dialog: Delete (games) / Hide
+							break;
+						case TM_SETTINGS:
+							bannerTextShown = true;
+							pressed |= KEY_Y;
+							break;
+						case TM_MOVE:
+							bannerTextShown = true;
+							moveFromMenu = true;
+							break;
+						case TM_INFO: {
+							std::vector<std::string> lines;
+							std::string full;
+							if (te->kind == ENTRY_BUILTIN) {
+								full = te->name;
+								lines.push_back("Built-in app");
+							} else {
+								char cwdb[512];
+								full = getcwd(cwdb, sizeof(cwdb)) ? std::string(cwdb) : std::string();
+								if (!full.empty() && full.back() != '/')
+									full += '/';
+								full += te->name;
+								lines.push_back(romTypeName(bnrRomType[CURPOS], isDSiWare[CURPOS]));
+							}
+							struct stat st;
+							if (stat(full.c_str(), &st) == 0 && S_ISREG(st.st_mode))
+								lines.push_back("Size: " + formatFileSize(st.st_size));
+							if (te->kind != ENTRY_BUILTIN && bnrRomType[CURPOS] == 0 && gameTid[CURPOS][0] != 0)
+								lines.push_back(std::string("ID: ") + std::string(gameTid[CURPOS], 4));
+							lines.push_back("Path:");
+							lines.push_back(full);
+							showTileMessage(title.c_str(), lines);
+							break;
+						}
+						case TM_DELETE_FOLDER: {
+							const std::string dirName = te->name;
+							if (!folderIsEmpty(dirName)) {
+								snd().playWrong();
+								showTileMessage(dirName.c_str(), {"This folder is not empty.", "Only empty folders can be deleted."});
+							} else {
+								// A = delete, B = cancel (the same wording style as the other dialogs)
+								const TileMenuItem confirm[2] = {{"Delete this empty folder", TM_DELETE_FOLDER}, {"Cancel", TM_NONE}};
+								if (runTileMenu(dirName.c_str(), confirm, 2) == TM_DELETE_FOLDER && rmdir(dirName.c_str()) == 0) {
+									if (ms().showBoxArt)
+										clearBoxArt();
+									boxArtLoaded = false;
+									ms().saveSettings();
+									settingsChanged = false;
+									return "null";
+								}
+							}
+							break;
+						}
+						case TM_CREATE_FOLDER: {
+							std::string name = "New Folder";
+							for (int k = 2; k < 100 && access(name.c_str(), F_OK) == 0; k++)
+								name = "New Folder " + std::to_string(k);
+							if (mkdir(name.c_str(), 0777) == 0) {
+								boxArtLoaded = false;
+								ms().saveSettings();
+								settingsChanged = false;
+								return "null";
+							}
+							snd().playWrong();
+							break;
+						}
+						case TM_BROWSE:
+						case TM_LIBRARY: {
+							gameLibrarySetBrowse(choice == TM_BROWSE);
+							if (choice == TM_LIBRARY) {
+								// back to the games home: the device root combines every ROM root
+								char cwdb[512];
+								const std::string root = getcwd(cwdb, sizeof(cwdb)) ? gameLibraryDeviceRoot(cwdb) : std::string();
+								if (!root.empty() && chdir(root.c_str()) == 0)
+									ms().romfolder[ms().secondaryDevice] = root;
+							}
+							ms().pagenum[ms().secondaryDevice] = 0;
+							ms().cursorPosition[ms().secondaryDevice] = 0;
+							titleboxXdest[ms().secondaryDevice] = 0;
+							titlewindowXdest[ms().secondaryDevice] = 0;
+							titleboxXpos[ms().secondaryDevice] = 0;
+							titlewindowXpos[ms().secondaryDevice] = 0;
+							if (ms().showBoxArt)
+								clearBoxArt();
+							boxArtLoaded = false;
+							settingsChanged = false;
+							return "null";
+						}
+						default:
+							break;
+					}
+				}
+			}
+
 			if ((held & KEY_LEFT) || ((held & KEY_TOUCH) && touch.py > 171 && touch.px < 19 && ms().theme == TWLSettings::EThemeDSi)) { // Left or button arrow (DSi theme)
 				moveCursor(false, dirContents[scrn]);
 				dsiBinariesChecked = false;
@@ -3465,7 +3814,7 @@ std::string browseForFile(const std::vector<std::string_view> extensionList) {
 				checkedDSiWareCompatibleB4DS = false;
 				dsiWareRAMLimitMsgPrepped = false;
 				infoCheckTimer = 0;
-			} else if ((pressed & KEY_UP) && (PAGENUM > 0 || CURPOS > 0 || !backFound) && (ms().theme != TWLSettings::EThemeSaturn && ms().theme != TWLSettings::EThemeHBL) && !dirInfoIniFound && (ms().sortMethod == 4) && (CURPOS + PAGENUM * 40 < ((int)dirContents[scrn].size())) && dirContents[scrn][CURPOS + PAGENUM * 40].kind != ENTRY_BUILTIN) { // Move apps (DSi & 3DS themes)
+			} else if (moveFromMenu && (PAGENUM > 0 || CURPOS > 0 || !backFound) && (ms().theme != TWLSettings::EThemeSaturn && ms().theme != TWLSettings::EThemeHBL) && !dirInfoIniFound && (ms().sortMethod == 4) && (CURPOS + PAGENUM * 40 < ((int)dirContents[scrn].size())) && dirContents[scrn][CURPOS + PAGENUM * 40].kind != ENTRY_BUILTIN) { // Move apps (DSi & 3DS themes)
 				bannerTextShown = false; // Redraw the title when done
 				showSTARTborder = false;
 				currentBg = 2;
