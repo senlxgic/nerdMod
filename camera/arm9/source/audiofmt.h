@@ -6,16 +6,15 @@
 namespace audiofmt {
 
 // libnds delivers 12-bit microphone samples shifted up to 16 bit. Depending on the path (NTR SPI or TWL codec) they
-// may be centred on 0 (signed) or on 0x8000 (offset binary). Returns true when the block is offset binary, i.e. its
-// signed mean is far from zero. Silence (all zero) is signed by definition.
+// may be centred on 0 (signed) or on 0x8000 (offset binary). Read as signed, an offset-binary block has a large
+// mean magnitude (every sample sits near +-32768) while a real signal sits near 0. Silence (all zero) is signed.
 inline bool looksOffsetBinary(const int16_t *s, uint32_t n) {
 	if (!n)
 		return false;
-	int64_t sum = 0;
+	uint64_t sum = 0;
 	for (uint32_t i = 0; i < n; i++)
-		sum += s[i];
-	const int64_t mean = sum / (int64_t)n;
-	return mean > 20000 || mean < -20000;
+		sum += (uint64_t)(s[i] < 0 ? -(int32_t)s[i] : (int32_t)s[i]);
+	return sum / n > 20000u;
 }
 
 inline void flipToSigned(int16_t *s, uint32_t n) {
