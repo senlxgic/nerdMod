@@ -23,6 +23,7 @@
 #include <cmath>
 #include <dirent.h>
 #include <cstdarg>
+#include <cerrno>
 #include <cstring>
 #include <strings.h>
 #include <sys/stat.h>
@@ -48,6 +49,8 @@
 #include "graphics/ThemeTextures.h"
 #include "common/lodepng.h"
 #include "gameArt.h"
+#include "../nmdiag.h"
+#include "common/inifile.h"
 #include "launchDots.h"
 #include "queueControl.h"
 #include "sound.h"
@@ -1298,31 +1301,6 @@ void loadBootstrapScreenshot(FILE *file, const bool bufferOnly);
 // Images bigger than the frame (208x156) are scaled down to fit instead of being replaced by the default, a file
 // that cannot be decoded is skipped (the next candidate is tried), and what happened is written to
 // <dev>:/_nds/nerdMod/photo-status.txt so a picture that does not show can be explained from a PC.
-static std::string photoDiag;
-
-static void photoDiagAdd(const char *fmt, ...) {
-	char line[200];
-	va_list ap;
-	va_start(ap, fmt);
-	vsnprintf(line, sizeof(line), fmt, ap);
-	va_end(ap);
-	if (photoDiag.size() < 3000)
-		photoDiag += line;
-}
-
-static void photoDiagWrite() {
-	const char *dev = sys().isRunFromSD() ? "sd:" : "fat:";
-	std::string dir = std::string(dev) + "/_nds";
-	mkdir(dir.c_str(), 0777);
-	dir += "/nerdMod";
-	mkdir(dir.c_str(), 0777);
-	FILE *f = fopen((dir + "/photo-status.txt").c_str(), "wb");
-	if (f) {
-		fwrite(photoDiag.data(), 1, photoDiag.size(), f);
-		fclose(f);
-	}
-}
-
 static bool hasPhotoExtension(const std::string &name, bool &isBmp) {
 	const size_t dot = name.find_last_of('.');
 	if (dot == std::string::npos || dot + 1 >= name.size())
@@ -1383,9 +1361,10 @@ static bool decodePhotoFile(const std::string &path, std::vector<unsigned char> 
 	w = h = 0;
 	FILE *f = fopen(path.c_str(), "rb");
 	if (!f) {
-		why = "cannot open";
+		why = "cannot open (errno=" + std::to_string(errno) + ")";
 		return false;
 	}
+	nmdiag::add("  open=ok type=%s\n", isBmp ? "BMP" : "PNG");
 	u8 head[32] = {0};
 	const size_t got = fread(head, 1, sizeof(head), f);
 	if (!isBmp) {
@@ -1401,6 +1380,7 @@ static bool decodePhotoFile(const std::string &path, std::vector<unsigned char> 
 			why = "too large to decode (" + std::to_string(pw) + "x" + std::to_string(ph) + ")";
 			return false;
 		}
+		nmdiag::add("  source=%ux%u\n", pw, ph);
 		const unsigned err = lodepng::decode(image, w, h, path);
 		if (err != 0 || image.size() < (size_t)w * h * 4 || w == 0 || h == 0) {
 			why = std::string("PNG decode error: ") + lodepng_error_text(err);
@@ -1408,7 +1388,9 @@ static bool decodePhotoFile(const std::string &path, std::vector<unsigned char> 
 			w = h = 0;
 			return false;
 		}
+		nmdiag::add("  decode=ok\n");
 		fitPhoto(image, w, h);
+		nmdiag::add("  scaled=%ux%u\n", w, h);
 		return true;
 	}
 
@@ -1439,6 +1421,7 @@ static bool decodePhotoFile(const std::string &path, std::vector<unsigned char> 
 		return false;
 	}
 	const uint sw = (uint)bw, sh = (uint)bh;
+	nmdiag::add("  source=%ux%u bpp=%u\n", sw, sh, bpp);
 	uint dw = sw, dh = sh;
 	if (dw > 208 || dh > 156) {
 		dw = 208;
@@ -1471,38 +1454,76 @@ static bool decodePhotoFile(const std::string &path, std::vector<unsigned char> 
 	fclose(f);
 	w = dw;
 	h = dh;
+	nmdiag::add("  decode=ok scaled=%ux%u\n", w, h);
 	return true;
 }
 
+static const char *themeName() {
+	switch (ms().theme) {
+		case TWLSettings::EThemeDSi: return "DSi";
+		case TWLSettings::ETheme3DS: return "3DS";
+		case TWLSettings::EThemeR4: return "R4";
+		case TWLSettings::EThemeWood: return "Wood";
+		case TWLSettings::EThemeSaturn: return "Saturn";
+		case TWLSettings::EThemeHBL: return "HBL";
+		default: return "other";
+	}
+}
+
 bool loadPhotoList() {
+	nmdiag::add("function=loadPhotoList (DSi-theme top photo, graphics.cpp)\n");
 	if (!tex().photoBuffer()) {
+		nmdiag::add("buffer allocation: photoBuffer is NULL -> cannot render\nresult=NOT DISPLAYED\n");
 		return false;
 	}
-
-	photoDiag.clear();
-	photoDiagAdd("nerdMod top-screen photo status\nShowPhoto=%d RenderPhoto=%d\n", (int)ms().showPhoto, (int)tc().renderPhoto());
+	nmdiag::add("buffer allocation: ok (208x156)\n");
 
 	std::vector<std::string> photoList;
-	const char *dirs[2] = {sys().isRunFromSD() ? "sd:/_nds/TWiLightMenu/dsimenu/photos/" : "fat:/_nds/TWiLightMenu/dsimenu/photos/",
-						   sys().isRunFromSD() ? "fat:/_nds/TWiLightMenu/dsimenu/photos/" : "sd:/_nds/TWiLightMenu/dsimenu/photos/"};
-	for (int d = 0; d < 2; d++) {
+	// 1. the picture chosen with "Set as Home Photo" (manifest)
+	{
+		const char *devs[2] = {"sd:", "fat:"};
+		for (const char *dev : devs) {
+			const std::string mpath = std::string(dev) + "/_nds/nerdMod/home-photo.ini";
+			FILE *mf = fopen(mpath.c_str(), "rb");
+			if (!mf)
+				continue;
+			fclose(mf);
+			CIniFile mini(mpath);
+			const std::string chosen = mini.GetString("HOME", "PATH", "");
+			nmdiag::add("manifest %s: PATH=%s\n", mpath.c_str(), chosen.c_str());
+			bool b;
+			if (!chosen.empty() && hasPhotoExtension(chosen, b) && access(chosen.c_str(), F_OK) == 0) {
+				photoList.emplace_back(chosen);
+				break;
+			}
+		}
+	}
+	const bool manifestChosen = !photoList.empty();
+	// 2. folders: the nerdMod home folder, then the existing TWiLight photo folder, on both devices
+	const char *dirs[4] = {"sd:/_nds/nerdMod/photos/home/", "sd:/_nds/TWiLightMenu/dsimenu/photos/", "fat:/_nds/nerdMod/photos/home/", "fat:/_nds/TWiLightMenu/dsimenu/photos/"};
+	for (int d = 0; d < 4 && !manifestChosen; d++) {
 		DIR *dir = opendir(dirs[d]);
 		if (!dir) {
-			photoDiagAdd("folder %s: missing\n", dirs[d]);
+			nmdiag::add("folder %s: not available (errno=%d)\n", dirs[d], errno);
 			continue;
 		}
 		int seen = 0;
 		while (struct dirent *ent = readdir(dir)) {
 			const std::string name = ent->d_name;
 			bool isBmp;
-			if (name == "." || name == ".." || name.compare(0, 2, "._") == 0 || !hasPhotoExtension(name, isBmp))
+			if (name == "." || name == ".." || name.compare(0, 2, "._") == 0)
 				continue;
+			if (!hasPhotoExtension(name, isBmp)) {
+				nmdiag::add("  ignored (not .png/.bmp): %s\n", name.c_str());
+				continue;
+			}
 			if (++seen > 200)
 				break; // bounded
+			nmdiag::add("  considering: %s\n", name.c_str());
 			photoList.emplace_back(std::string(dirs[d]) + name);
 		}
 		closedir(dir);
-		photoDiagAdd("folder %s: %d candidate picture(s)\n", dirs[d], seen);
+		nmdiag::add("folder %s: %d candidate picture(s)\n", dirs[d], seen);
 	}
 
 	if (!photoList.empty()) {
@@ -1511,14 +1532,15 @@ bool loadPhotoList() {
 		const size_t tries = photoList.size() < 4 ? photoList.size() : 4;
 		for (size_t t = 0; t < tries; t++) {
 			const std::string &candidate = photoList[(startIdx + t) % photoList.size()];
+			nmdiag::add("trying: %s\n", candidate.c_str());
 			if (loadPhoto(candidate, false)) {
 				currentPhotoPath = candidate;
 				currentPhotoIsBootstrap = false;
-				photoDiagAdd("shown: %s (%ux%u)\n", candidate.c_str(), photoWidth, photoHeight);
-				photoDiagWrite();
+				nmdiag::add("render=ok destination=top screen photo frame (bgSub 24,24 208x156)\nresult=DISPLAYED file=%s size=%ux%u\n", candidate.c_str(), photoWidth, photoHeight);
+				nmdiag::flush();
 				return true;
 			}
-			photoDiagAdd("skipped: %s\n", candidate.c_str());
+			nmdiag::add("skipped: %s\n", candidate.c_str());
 		}
 	}
 
@@ -1542,8 +1564,8 @@ bool loadPhotoList() {
 			loadBootstrapScreenshot(file, false);
 			fclose(file);
 			currentPhotoIsBootstrap = true;
-			photoDiagAdd("shown: nds-bootstrap screenshot #%d\n", currentBootstrapPhoto);
-			photoDiagWrite();
+			nmdiag::add("shown: nds-bootstrap screenshot #%d\n", currentBootstrapPhoto);
+			nmdiag::flush();
 			return true;
 		}
 		fclose(file);
@@ -1558,9 +1580,25 @@ bool loadPhotoList() {
 		loadPhoto(currentPhotoPath, false);
 	}
 	currentPhotoIsBootstrap = false;
-	photoDiagAdd("shown: built-in default\n");
-	photoDiagWrite();
+	nmdiag::add("fallback image used: built-in default\nresult=DEFAULT DISPLAYED\n");
+	nmdiag::flush();
 	return true;
+}
+
+// Called once per menu start, always (also when the photo is off), so the diagnostic exists whatever happens.
+bool homePhotoInit() {
+	nmdiag::begin("nerdMod photo diagnostic");
+	nmdiag::add("device=%s\ntheme=%s\nmacroMode=%d showPhoto=%d themeRenderPhoto=%d boxArtColorDeband=%d\n", sys().isRunFromSD() ? "sd:" : "fat:", themeName(), (int)ms().macroMode, (int)ms().showPhoto, (int)tc().renderPhoto(), (int)boxArtColorDeband);
+	nmdiag::flush(); // breadcrumb before anything below can go wrong
+	if (ms().macroMode || !ms().showPhoto || !tc().renderPhoto()) {
+		nmdiag::add("result=SKIPPED: %s\n", ms().macroMode ? "macro mode" : (!ms().showPhoto ? "Show Photo is off in Settings" : "the active theme has RenderPhoto=0"));
+		nmdiag::flush();
+		return false;
+	}
+	srand(time(NULL));
+	const bool ok = loadPhotoList();
+	nmdiag::flush();
+	return ok;
 }
 
 void reloadPhoto() {
@@ -1598,7 +1636,7 @@ bool loadPhoto(const std::string &path, const bool bufferOnly) {
 
 	std::string why;
 	if (!decodePhotoFile(path, image, photoWidth, photoHeight, why)) {
-		photoDiagAdd("cannot use %s: %s\n", path.c_str(), why.c_str());
+		nmdiag::add("cannot use %s: %s\n", path.c_str(), why.c_str());
 		logPrint("photo: cannot use %s: %s\n", path.c_str(), why.c_str());
 		if (path.compare(0, 6, "nitro:") != 0) {
 			return false; // the caller moves on to the next candidate / the default
@@ -1940,10 +1978,7 @@ void graphicsInit() {
 
 	// printf("drawn bgload");
 	// while (1) {}
-	if (!ms().macroMode && ms().showPhoto && tc().renderPhoto()) {
-		srand(time(NULL));
-		loadPhotoList();
-	}
+	homePhotoInit();
 
 	if (ms().theme == TWLSettings::EThemeHBL) {
 		u16* newPalette = (u16*)bubblesPal;

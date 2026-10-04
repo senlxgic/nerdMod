@@ -30,6 +30,7 @@ void drawCurrentDate();
 void drawCurrentTime();
 
 bool loadPhotoList();
+bool homePhotoInit();
 void reloadPhoto();
 void clearBoxArt();
 void graphicsInit();

@@ -989,9 +989,8 @@ void customSleep() {
 		powerOn(PM_BACKLIGHT_TOP);
 	}
 	powerOn(PM_BACKLIGHT_BOTTOM);
-	if (!ms().macroMode && ms().showPhoto && tc().renderPhoto()) {
-		srand(time(NULL));
-		if (loadPhotoList()) {
+	{
+		if (homePhotoInit()) {
 			extern bool boxArtLoaded;
 			extern bool showLshoulder;
 			extern bool showRshoulder;
