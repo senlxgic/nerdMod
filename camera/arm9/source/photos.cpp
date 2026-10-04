@@ -210,6 +210,8 @@ void photosDrawYuvScaled(const u16 *yuv422, u16 *dst) {
 	}
 }
 
+std::string photosDirectory(void) { return photoDir(); }
+
 bool photosDelete(const std::string &name) {
 	return remove((photoDir() + "/" + name).c_str()) == 0;
 }

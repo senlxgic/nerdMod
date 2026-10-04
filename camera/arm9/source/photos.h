@@ -43,4 +43,7 @@ void photosDrawYuvScaled(const u16 *yuv422, u16 *dst);
 
 bool photosDelete(const std::string &name);
 
+// Full path of the photo folder (the folder may not exist yet).
+std::string photosDirectory(void);
+
 #endif

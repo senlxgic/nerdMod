@@ -1,14 +1,16 @@
 /*
 	nerdMod Camera
 
-	A small Nintendo DSi camera application for nerdMod / TWiLight Menu++:
-	live preview from the inner or outer camera (I2C 0x7A / 0x78), photo capture to the SD card,
-	and a simple album. Launched like any other app from the menu; it returns
-	to the menu it was started from.
+	A small Nintendo DSi camera application for nerdMod:
+	live preview from the inner or outer camera (I2C 0x7A / 0x78), photos (640x480 BMP) and videos (256x192, about
+	10 fps, NERDVID) on the SD card, and an album that plays them back. Launched like any other app from the menu;
+	it returns to the menu it was started from.
 
-	Controls (touch buttons mirror them):
-	  Camera:  A shutter | X or L/R switch camera | Y album | B back
-	  Album:   Left/Right or L/R browse | X delete | B back
+	Controls (the touch buttons mirror them):
+	  Camera:  A shutter / record | X or L/R switch camera | SELECT photo <-> video | Y album | B back
+	           (B while recording stops the recording)
+	  Album:   Left/Right or L/R browse | A play (videos) | X delete | B back
+	  Player:  A play/pause | Left/Right seek 5 s | B back
 */
 
 #include <nds.h>
@@ -23,8 +25,13 @@
 #include <string>
 #include <vector>
 
+#include "app.h"
 #include "camera.h"
+#include "gallery.h"
 #include "photos.h"
+#include "ui.h"
+#include "video.h"
+#include "videoContainer.h"
 
 #include "common/nds_loader_arm9.h"
 #include "common/systemdetails.h"
@@ -37,117 +44,27 @@ bool controlTopBright = true;
 bool controlBottomBright = true;
 bool useTwlCfg = false;
 
+
+
 namespace {
 
-constexpr size_t MAX_ALBUM_ENTRIES = 512;
-
-u16 *const previewPage[2] = {(u16 *)0x06000000, (u16 *)0x06020000}; // VRAM A, VRAM B (main BG bitmaps)
-
-PrintConsole subConsole;
 bool exitRequested = false;
 
-//---------------------------------------------------------------- text / buttons
-
-struct Button {
-	int x, y, w, h;
-	const char *line1;
-	const char *line2;
-};
-
-void at(int col, int row, const char *text) { iprintf("\x1b[%d;%dH%s", row, col, text); }
-
-void clearRow(int row) { iprintf("\x1b[%d;0H%32s", row, ""); }
-
-void centred(int row, const char *text) {
-	const int len = (int)strlen(text);
-	clearRow(row);
-	at(len >= 32 ? 0 : (32 - len) / 2, row, text);
-}
-
-void drawButton(const Button &b) {
-	char line[40];
-	auto fill = [&](char edge, char mid) {
-		for (int i = 0; i < b.w; i++)
-			line[i] = (i == 0 || i == b.w - 1) ? edge : mid;
-		line[b.w] = 0;
-	};
-	fill('+', '-');
-	at(b.x, b.y, line);
-	fill('|', ' ');
-	for (int r = 1; r < b.h - 1; r++)
-		at(b.x, b.y + r, line);
-	fill('+', '-');
-	at(b.x, b.y + b.h - 1, line);
-
-	auto label = [&](int row, const char *text) {
-		const int len = (int)strlen(text);
-		if (len <= b.w - 2)
-			at(b.x + (b.w - len) / 2, row, text);
-	};
-	label(b.y + 1, b.line1);
-	label(b.y + 2, b.line2);
-}
-
-bool hit(const Button &b, const touchPosition &t) {
-	const int tx = t.px / 8, ty = t.py / 8;
-	return tx >= b.x && tx < b.x + b.w && ty >= b.y && ty < b.y + b.h;
-}
-
-//---------------------------------------------------------------- video
-
-void clearPreviewPages() {
-	for (int i = 0; i < 2; i++)
-		dmaFillHalfWords(0x8000, previewPage[i], 256 * 256 * 2);
-}
-
-void initVideo() {
-	videoSetMode(MODE_5_2D);
-	videoSetModeSub(MODE_0_2D);
-	vramSetBankA(VRAM_A_MAIN_BG_0x06000000);
-	vramSetBankB(VRAM_B_MAIN_BG_0x06020000);
-	vramSetBankC(VRAM_C_SUB_BG_0x06200000);
-
-	bgInit(3, BgType_Bmp16, BgSize_B16_256x256, 0, 0);
-	bgSetMapBase(3, 0);
-	clearPreviewPages();
-
-	consoleInit(&subConsole, 0, BgType_Text4bpp, BgSize_T_256x256, 31, 0, false, true);
-	BG_PALETTE_SUB[0] = RGB15(26, 29, 31);   // light blue-grey background
-	BG_PALETTE_SUB[255] = RGB15(2, 8, 16);   // dark text
-	iprintf("\x1b[2J");
-
-	setBrightness(3, 0);
-}
-
-void showPage(int page) { bgSetMapBase(3, page ? 8 : 0); } // 8 * 16 KB = second 128 KB bitmap
-
-void flashTop() {
-	setBrightness(1, 16);
-	for (int i = 0; i < 4; i++)
-		swiWaitForVBlank();
-	for (int level = 16; level >= 0; level -= 4) {
-		setBrightness(1, level);
-		swiWaitForVBlank();
-	}
-}
+enum { B_SHUTTER = 1, B_ALBUM, B_FLIP, B_BACK, B_MODE, B_OK };
 
 //---------------------------------------------------------------- leaving
-
-void waitFrames(int n) {
-	for (int i = 0; i < n; i++)
-		swiWaitForVBlank();
-}
 
 [[noreturn]] void stopForever() {
 	while (true)
 		swiWaitForVBlank();
 }
 
-void returnToMenu() {
+[[noreturn]] void returnToMenu() {
 	cameraShutdown();
 
-	setBrightness(3, 16); // fade to white
-	waitFrames(8);
+	uiTopFade(true, 6); // fade to white
+	setBrightness(3, 16);
+	appWaitFrames(4);
 
 	// Same choice as the other TWiLight apps (see manual/arm9/source/main.cpp: loadROMselect)
 	const bool sd = sys().isRunFromSD();
@@ -182,16 +99,363 @@ void returnToMenu() {
 	runNdsFile(sys().isRunFromSD() ? "sd:/boot.nds" : "fat:/boot.nds", 0, NULL, sys().isRunFromSD(), true, true, false, true, true, false, -1);
 
 	setBrightness(3, 0);
-	iprintf("\x1b[2J");
-	centred(8, "Could not return to menu.");
-	centred(10, "Hold the power button.");
+	uiTextClear();
+	uiTextCentred(8, "Could not return to menu.");
+	uiTextCentred(10, "Hold the power button.");
 	stopForever();
 }
 
-// Power button / START+SELECT+L+R from the ARM7 (see arm7/source/main.c)
-bool powerExitRequested() { return fifoCheckValue32(FIFO_USER_01); }
+void showCameraButtons(bool videoMode, bool recording, bool glow = false) {
+	const int shutterN = recording ? (glow ? UI_SHUTTER_REC_GLOW : UI_SHUTTER_REC) : (videoMode ? UI_SHUTTER_VIDEO : UI_SHUTTER_PHOTO);
+	const int shutterP = recording ? UI_SHUTTER_REC_P : (videoMode ? UI_SHUTTER_VIDEO_P : UI_SHUTTER_PHOTO_P);
+	const UiButton list[] = {
+		{B_SHUTTER, UI_RECT_SHUTTER, shutterN, shutterP, true},
+		{B_ALBUM, UI_RECT_ALBUM, UI_BTN_ALBUM, UI_BTN_ALBUM_P, !recording},
+		{B_FLIP, UI_RECT_FLIP, UI_BTN_FLIP, UI_BTN_FLIP_P, !recording},
+		{B_BACK, UI_RECT_BACK, UI_BTN_BACK, UI_BTN_BACK_P, true},
+		{B_MODE, UI_RECT_CAPSULE, videoMode ? UI_CAPSULE_VIDEO : UI_CAPSULE_PHOTO, -1, !recording},
+	};
+	uiBottomDrawBackground();
+	uiShowButtons(list, 5);
+}
 
-void lidSleep(Camera resume) {
+//---------------------------------------------------------------- error screen
+
+void fatalError(const char *line1, const char *line2 = "") {
+	if (rec::active())
+		rec::stop(rec::STOP_USER); // keep what was recorded so far
+	cameraShutdown();
+	setBrightness(3, 0);
+	uiTopOverlayVisible(false);
+	uiClearButtons();
+	uiTextClear();
+	uiBottomDrawBackground();
+	uiDrawDialogPanel();
+	const UiButton ok[] = {{B_OK, UI_RECT_BACK, UI_BTN_BACK, UI_BTN_BACK_P, true}};
+	uiShowButtons(ok, 1);
+	uiTextCentred(7, "nerdMod Camera");
+	uiTextCentred(10, line1);
+	if (line2[0])
+		uiTextCentred(12, line2);
+	while (true) {
+		scanKeys();
+		const u32 down = keysDown(), up = keysUp();
+		const int touched = uiHandleInput(down, up);
+		uiTick();
+		if ((down & (KEY_A | KEY_B)) || touched == B_OK || appPowerExitRequested())
+			break;
+		swiWaitForVBlank();
+	}
+	returnToMenu();
+}
+
+//---------------------------------------------------------------- camera screen
+
+// Waits (bounded) for the running preview transfer to finish.
+bool waitTransferIdle(int maxFrames) {
+	for (int i = 0; i < maxFrames; i++) {
+		if (!cameraTransferActive())
+			return true;
+		swiWaitForVBlank();
+	}
+	return false;
+}
+
+// Captures a full-size frame, shows it on the top screen and saves it. Returns the status line to show.
+const char *takePhoto(int &frontPage) {
+	if (!waitTransferIdle(60))
+		return "Camera busy";
+	cameraTransferStop();
+
+	u16 *yuv = (u16 *)memalign(32, CAM_CAPTURE_BYTES); // 32-byte aligned, size is a multiple of 32
+	if (!yuv)
+		return "Out of memory";
+
+	const char *result;
+	if (!cameraTransferStart(yuv, CAPTURE_MODE_CAPTURE)) {
+		result = "Capture failed";
+	} else if (!waitTransferIdle(60)) {
+		cameraTransferStop();
+		result = "Capture timed out";
+	} else {
+		cameraTransferStop();
+
+		// Immediate feedback: show what was captured, with a white flash
+		const int shownPage = frontPage ^ 1;
+		photosDrawYuvScaled(yuv, uiTopPage(shownPage));
+		uiTopShowPage(shownPage);
+		frontPage = shownPage;
+		uiTopFlash();
+
+		std::string name;
+		switch (photosSaveYuv(yuv, name)) {
+			case PHOTO_OK:
+				result = "Photo saved";
+				break;
+			case PHOTO_NO_STORAGE:
+				result = "No SD card";
+				break;
+			case PHOTO_NO_SPACE:
+				result = "SD card full";
+				break;
+			default:
+				result = "Save failed";
+				break;
+		}
+		appWaitFrames(45); // keep the captured photo on screen for a moment
+	}
+
+	free(yuv);
+	return result;
+}
+
+const char *messageForStop(const rec::Result &r) {
+	if (!r.saved)
+		return r.frames == 0 ? "Nothing recorded" : "Video not saved";
+	switch (r.reason) {
+		case rec::STOP_SD_FULL: return "SD full - saved";
+		case rec::STOP_TOO_SLOW: return "SD slow - saved";
+		case rec::STOP_WRITE_ERROR: return "Write error-saved";
+		case rec::STOP_LIMIT: return "Limit - saved";
+		default: return "Video saved";
+	}
+}
+
+void cameraMode() {
+	// Start with the outer camera if it works, otherwise the inner one
+	Camera cam = cameraAvailable(CAM_OUTER) ? CAM_OUTER : CAM_INNER;
+	if (!cameraActivate(cam))
+		fatalError("The camera did not start.", "Leave and open Camera again.");
+
+	bool videoMode = false;
+	uiTopSetCamera(cam == CAM_INNER);
+	uiTopSetMode(false);
+	showCameraButtons(false, false);
+	uiStatus("Ready");
+
+	int front = 0;			// top page currently shown
+	bool inFlight = false;
+	int framesInFlight = 0; // watchdog for a preview transfer that never completes
+	int stalls = 0;
+	int glowCounter = 0;
+	bool glow = false;
+	int messageFrames = 0;
+	const char *lastStatus = "";
+
+	auto setMessage = [&](const char *m) {
+		uiStatus(m);
+		lastStatus = m;
+		messageFrames = 150;
+	};
+	auto setIdleStatus = [&](const char *m) {
+		if (m != lastStatus) {
+			uiStatus(m);
+			lastStatus = m;
+		}
+	};
+
+	auto stopRecording = [&](rec::StopReason why) {
+		waitTransferIdle(20);
+		cameraTransferStop();
+		inFlight = false;
+		uiStatus("Saving...");
+		const rec::Result r = rec::stop(why);
+		uiTopSetRecording(false, 0);
+		showCameraButtons(videoMode, false);
+		setMessage(messageForStop(r));
+	};
+
+	auto startRecording = [&]() {
+		waitTransferIdle(30);
+		cameraTransferStop();
+		inFlight = false;
+		std::string error;
+		if (!rec::start(cam == CAM_INNER, error)) {
+			setMessage(error.c_str());
+			return;
+		}
+		glowCounter = 0;
+		glow = false;
+		showCameraButtons(videoMode, true);
+		uiTopSetRecording(true, 0);
+		lastStatus = "";
+		setIdleStatus("Recording");
+	};
+
+	while (!exitRequested) {
+		// ---- preview: double-buffered so the picture never tears. While recording the frames land in RAM
+		//      buffers first (see video.h) and are copied to the screen page.
+		if (!cameraTransferActive()) {
+			if (inFlight) {
+				inFlight = false;
+				const int back = front ^ 1;
+				if (rec::active()) {
+					rec::frameCaptured();
+					const u16 *f = rec::lastFrame();
+					if (f)
+						dmaCopyHalfWords(3, f, uiTopPage(back), nvid::FRAME_BYTES);
+				}
+				front = back;
+				uiTopShowPage(front);
+			}
+			u16 *target = rec::active() ? rec::captureTarget() : uiTopPage(front ^ 1);
+			if (!target || !cameraTransferStart(target, CAPTURE_MODE_PREVIEW)) {
+				if (rec::active())
+					stopRecording(rec::STOP_USER);
+				fatalError("The camera stopped responding.");
+			}
+			inFlight = true;
+			framesInFlight = 0;
+		} else if (++framesInFlight > 120) {
+			// A preview frame normally lands within a few vblanks. Abort, restart, and
+			// give up if it keeps happening.
+			cameraTransferStop();
+			inFlight = false;
+			if (++stalls >= 5) {
+				if (rec::active())
+					stopRecording(rec::STOP_USER);
+				fatalError("The camera stopped responding.", "(no image data)");
+			}
+		}
+
+		// ---- recording housekeeping: at most one SD write per iteration
+		if (rec::active()) {
+			rec::pump();
+			uiTopSetRecording(true, rec::elapsedMs() / 1000);
+			if (++glowCounter >= 30) {
+				glowCounter = 0;
+				glow = !glow;
+				uiSetButtonImages(B_SHUTTER, glow ? UI_SHUTTER_REC_GLOW : UI_SHUTTER_REC, UI_SHUTTER_REC_P);
+			}
+			const rec::StopReason why = rec::autoStopReason();
+			if (why != rec::STOP_NONE) {
+				stopRecording(why);
+			} else if (messageFrames == 0) {
+				if (rec::queuedFrames() >= 5)
+					setIdleStatus("SD card is slow...");
+				else if (rec::elapsedMs() > 2500 && !rec::hasMicData())
+					setIdleStatus("Rec, no sound");
+				else
+					setIdleStatus("Recording");
+			}
+		}
+
+		scanKeys();
+		const u32 down = keysDown(), up = keysUp();
+		int action = uiHandleInput(down, up);
+		uiTick();
+
+		if (action < 0) {
+			const bool rc = rec::active();
+			if (down & KEY_A)
+				action = B_SHUTTER;
+			else if (down & KEY_B)
+				action = B_BACK;
+			else if (!rc && (down & (KEY_X | KEY_L | KEY_R)))
+				action = B_FLIP;
+			else if (!rc && (down & KEY_Y))
+				action = B_ALBUM;
+			else if (!rc && (down & KEY_SELECT))
+				action = B_MODE;
+			if (action >= 0)
+				uiPressFeedback(action);
+		}
+
+		if (appPowerExitRequested()) {
+			if (rec::active())
+				stopRecording(rec::STOP_USER);
+			exitRequested = true;
+			break;
+		}
+
+		if (down & KEY_LID) {
+			if (rec::active())
+				stopRecording(rec::STOP_USER);
+			waitTransferIdle(10);
+			appLidSleep(cam);
+			inFlight = false;
+			continue;
+		}
+
+		if (messageFrames > 0 && --messageFrames == 0 && !rec::active()) {
+			lastStatus = "";
+			setIdleStatus(videoMode ? "Video" : "Ready");
+		}
+
+		if (action == B_BACK) {
+			if (rec::active()) {
+				stopRecording(rec::STOP_USER);
+			} else {
+				break;
+			}
+		} else if (action == B_SHUTTER) {
+			if (rec::active()) {
+				stopRecording(rec::STOP_USER);
+			} else if (videoMode) {
+				startRecording();
+			} else {
+				setMessage(takePhoto(front));
+				inFlight = false;
+			}
+		} else if (action == B_MODE && !rec::active()) {
+			videoMode = !videoMode;
+			uiTopSetMode(videoMode);
+			showCameraButtons(videoMode, false);
+			setMessage(videoMode ? "Video mode" : "Photo mode");
+		} else if (action == B_FLIP && !rec::active()) {
+			waitTransferIdle(30);
+			cameraTransferStop();
+			inFlight = false;
+			uiTopFade(true, 4);
+			const Camera other = (cam == CAM_INNER) ? CAM_OUTER : CAM_INNER;
+			if (cameraActivate(other)) {
+				cam = other;
+				setMessage(cam == CAM_INNER ? "Inner camera" : "Outer camera");
+			} else {
+				setMessage("Switch failed");
+				cameraActivate(cam);
+			}
+			uiTopSetCamera(cam == CAM_INNER);
+			uiTopFade(false, 4);
+		} else if (action == B_ALBUM && !rec::active()) {
+			waitTransferIdle(30);
+			cameraTransferStop();
+			inFlight = false;
+			uiTopFade(true, 4);
+			const AlbumExit result = galleryRun();
+			if (result == AlbumExit::PowerExit) {
+				exitRequested = true;
+				break;
+			}
+			if (!cameraActivate(cam))
+				fatalError("The camera did not start.");
+			uiTopClear();
+			uiTopSetCamera(cam == CAM_INNER);
+			uiTextClear();
+			showCameraButtons(videoMode, false);
+			lastStatus = "";
+			setIdleStatus(videoMode ? "Video" : "Ready");
+			uiTopFade(false, 4);
+		}
+
+		swiWaitForVBlank();
+	}
+
+	if (rec::active())
+		rec::stop(rec::STOP_USER);
+}
+
+} // namespace
+
+//---------------------------------------------------------------- services for gallery / player
+bool appPowerExitRequested() { return fifoCheckValue32(FIFO_USER_01); } // from the ARM7 (see arm7/source/main.c)
+
+void appWaitFrames(int frames) {
+	for (int i = 0; i < frames; i++)
+		swiWaitForVBlank();
+}
+
+void appLidSleep(Camera resume) {
 	cameraTransferStop();
 	cameraDeactivateActive();
 	if (!ms().macroMode)
@@ -208,323 +472,6 @@ void lidSleep(Camera resume) {
 		cameraActivate(resume);
 }
 
-//---------------------------------------------------------------- error screen
-
-void fatalError(const char *line1, const char *line2 = "") {
-	cameraShutdown();
-	setBrightness(3, 0);
-	iprintf("\x1b[2J");
-	centred(6, "nerdMod Camera");
-	centred(9, line1);
-	if (line2[0])
-		centred(11, line2);
-	Button back = {9, 15, 14, 4, "OK", "(B / A)"};
-	drawButton(back);
-	while (true) {
-		scanKeys();
-		touchPosition t;
-		touchRead(&t);
-		const u32 down = keysDown();
-		if ((down & (KEY_A | KEY_B)) || ((down & KEY_TOUCH) && hit(back, t)) || powerExitRequested())
-			break;
-		swiWaitForVBlank();
-	}
-	returnToMenu();
-}
-
-//---------------------------------------------------------------- album
-
-enum class AlbumExit { Back, PowerExit };
-
-bool confirmDelete(const std::string &name) {
-	iprintf("\x1b[2J");
-	centred(5, "Delete this photo?");
-	centred(7, name.c_str());
-	Button yes = {1, 12, 14, 4, "DELETE", "(A)"};
-	Button no = {17, 12, 14, 4, "CANCEL", "(B)"};
-	drawButton(yes);
-	drawButton(no);
-	while (true) {
-		scanKeys();
-		touchPosition t;
-		touchRead(&t);
-		const u32 down = keysDown();
-		if ((down & KEY_A) || ((down & KEY_TOUCH) && hit(yes, t)))
-			return true;
-		if ((down & KEY_B) || ((down & KEY_TOUCH) && hit(no, t)))
-			return false;
-		if (powerExitRequested()) {
-			exitRequested = true;
-			return false;
-		}
-		swiWaitForVBlank();
-	}
-}
-
-AlbumExit albumMode() {
-	// The camera is not needed here: switch it off (LED, power) while browsing.
-	cameraDeactivateActive();
-
-	std::vector<std::string> names;
-	photosList(names, MAX_ALBUM_ENTRIES);
-
-	const Button prev = {0, 14, 8, 4, "PREV", "(L)"};
-	const Button next = {8, 14, 8, 4, "NEXT", "(R)"};
-	const Button del = {16, 14, 8, 4, "DEL", "(X)"};
-	const Button back = {24, 14, 8, 4, "BACK", "(B)"};
-
-	int index = (int)names.size() - 1; // newest first
-	bool redraw = true;
-
-	while (true) {
-		if (redraw) {
-			redraw = false;
-			iprintf("\x1b[2J");
-			centred(1, "Album");
-			drawButton(prev);
-			drawButton(next);
-			drawButton(del);
-			drawButton(back);
-
-			if (names.empty()) {
-				dmaFillHalfWords(0x8000, previewPage[0], 256 * 192 * 2);
-				showPage(0);
-				centred(7, "No photos yet.");
-				centred(9, "Take one with the shutter!");
-			} else {
-				char count[32];
-				snprintf(count, sizeof(count), "%d / %d", index + 1, (int)names.size());
-				centred(3, count);
-				centred(5, names[index].c_str());
-				if (photosDrawScaled(names[index], previewPage[0])) {
-					showPage(0);
-				} else {
-					dmaFillHalfWords(0x8000, previewPage[0], 256 * 192 * 2);
-					showPage(0);
-					centred(8, "Cannot show this photo.");
-					centred(10, "(corrupt or unsupported)");
-				}
-			}
-		}
-
-		scanKeys();
-		touchPosition t;
-		touchRead(&t);
-		const u32 down = keysDown();
-
-		if (powerExitRequested())
-			return AlbumExit::PowerExit;
-		if (down & KEY_LID) {
-			lidSleep(CAM_NONE);
-			continue;
-		}
-
-		if ((down & KEY_B) || ((down & KEY_TOUCH) && hit(back, t)))
-			return AlbumExit::Back;
-
-		if (!names.empty()) {
-			if ((down & (KEY_LEFT | KEY_L)) || ((down & KEY_TOUCH) && hit(prev, t))) {
-				index = (index + (int)names.size() - 1) % (int)names.size();
-				redraw = true;
-			} else if ((down & (KEY_RIGHT | KEY_R)) || ((down & KEY_TOUCH) && hit(next, t))) {
-				index = (index + 1) % (int)names.size();
-				redraw = true;
-			} else if ((down & KEY_X) || ((down & KEY_TOUCH) && hit(del, t))) {
-				if (confirmDelete(names[index])) {
-					if (!photosDelete(names[index])) {
-						iprintf("\x1b[2J");
-						centred(8, "Could not delete photo.");
-						waitFrames(90);
-					} else {
-						names.erase(names.begin() + index);
-						if (index >= (int)names.size())
-							index = (int)names.size() - 1;
-					}
-				}
-				if (exitRequested)
-					return AlbumExit::PowerExit;
-				redraw = true;
-			}
-		}
-
-		swiWaitForVBlank();
-	}
-}
-
-//---------------------------------------------------------------- camera screen
-
-const Button btnShutter = {1, 7, 14, 4, "SHUTTER", "(A)"};
-const Button btnSwitch = {17, 7, 14, 4, "SWITCH", "(X / L / R)"};
-const Button btnAlbum = {1, 13, 14, 4, "ALBUM", "(Y)"};
-const Button btnBack = {17, 13, 14, 4, "BACK", "(B)"};
-
-void drawCameraScreen(Camera cam, const char *status) {
-	iprintf("\x1b[2J");
-	centred(1, "nerdMod Camera");
-	centred(3, cam == CAM_INNER ? "Camera: Inner" : "Camera: Outer");
-	if (status && status[0])
-		centred(5, status);
-	drawButton(btnShutter);
-	drawButton(btnSwitch);
-	drawButton(btnAlbum);
-	drawButton(btnBack);
-}
-
-// Waits (bounded) for the running preview transfer to finish.
-bool waitTransferIdle(int maxFrames) {
-	for (int i = 0; i < maxFrames; i++) {
-		if (!cameraTransferActive())
-			return true;
-		swiWaitForVBlank();
-	}
-	return false;
-}
-
-// Captures a full-size frame, shows it on the top screen and saves it.
-// Returns the status line to show.
-std::string takePhoto(Camera cam, int &frontPage) {
-	if (!waitTransferIdle(60))
-		return "Camera busy, try again.";
-	cameraTransferStop();
-
-	u16 *yuv = (u16 *)memalign(32, CAM_CAPTURE_BYTES); // 32-byte aligned, size is a multiple of 32
-	if (!yuv)
-		return "Out of memory.";
-
-	std::string result;
-	if (!cameraTransferStart(yuv, CAPTURE_MODE_CAPTURE)) {
-		result = "Capture failed.";
-	} else if (!waitTransferIdle(60)) {
-		cameraTransferStop();
-		result = "Capture timed out.";
-	} else {
-		cameraTransferStop();
-
-		// Immediate feedback: flash and show what was captured
-		photosDrawYuvScaled(yuv, previewPage[frontPage]);
-		flashTop();
-
-		std::string name;
-		switch (photosSaveYuv(yuv, name)) {
-			case PHOTO_OK:
-				result = "Saved " + name;
-				break;
-			case PHOTO_NO_STORAGE:
-				result = "SD card not available.";
-				break;
-			default:
-				result = "Save failed (SD full?).";
-				break;
-		}
-		waitFrames(60); // keep the captured photo on screen for a moment
-	}
-
-	free(yuv);
-	(void)cam;
-	return result;
-}
-
-// Runs the live camera until the user leaves. Returns true to keep the app running
-// (album was opened and closed) or false to exit.
-void cameraMode() {
-	// Start with the outer camera if it works, otherwise the inner one
-	Camera cam = cameraAvailable(CAM_OUTER) ? CAM_OUTER : CAM_INNER;
-	if (!cameraActivate(cam))
-		fatalError("The camera did not start.", "Leave and open Camera again.");
-
-	std::string status;
-	drawCameraScreen(cam, status.c_str());
-
-	int front = 0; // page currently shown
-	bool inFlight = false;
-	int framesInFlight = 0; // watchdog for a preview transfer that never completes
-	int stalls = 0;
-
-	while (!exitRequested) {
-		// ---- preview: double-buffered so the picture never tears
-		if (!cameraTransferActive()) {
-			if (inFlight) {
-				front ^= 1;
-				showPage(front);
-				inFlight = false;
-			}
-			if (!cameraTransferStart(previewPage[front ^ 1], CAPTURE_MODE_PREVIEW))
-				fatalError("The camera stopped responding.");
-			inFlight = true;
-			framesInFlight = 0;
-		} else if (++framesInFlight > 120) {
-			// A preview frame normally lands within a few vblanks. Abort, restart, and
-			// give up if it keeps happening.
-			cameraTransferStop();
-			inFlight = false;
-			if (++stalls >= 5)
-				fatalError("The camera stopped responding.", "(no image data)");
-		}
-
-		scanKeys();
-		touchPosition t;
-		touchRead(&t);
-		const u32 down = keysDown();
-
-		if (powerExitRequested()) {
-			exitRequested = true;
-			break;
-		}
-
-		if (down & KEY_LID) {
-			waitTransferIdle(10);
-			lidSleep(cam);
-			inFlight = false;
-			continue;
-		}
-
-		const bool wantShutter = (down & KEY_A) || ((down & KEY_TOUCH) && hit(btnShutter, t));
-		const bool wantSwitch = (down & (KEY_X | KEY_L | KEY_R)) || ((down & KEY_TOUCH) && hit(btnSwitch, t));
-		const bool wantAlbum = (down & KEY_Y) || ((down & KEY_TOUCH) && hit(btnAlbum, t));
-		const bool wantBack = (down & KEY_B) || ((down & KEY_TOUCH) && hit(btnBack, t));
-
-		if (wantBack)
-			break;
-
-		if (wantShutter) {
-			status = takePhoto(cam, front);
-			drawCameraScreen(cam, status.c_str());
-			inFlight = false;
-		} else if (wantSwitch) {
-			waitTransferIdle(30);
-			cameraTransferStop();
-			const Camera other = (cam == CAM_INNER) ? CAM_OUTER : CAM_INNER;
-			if (cameraActivate(other)) {
-				cam = other;
-				status.clear();
-			} else {
-				status = "Could not switch camera.";
-				cameraActivate(cam);
-			}
-			inFlight = false;
-			drawCameraScreen(cam, status.c_str());
-		} else if (wantAlbum) {
-			waitTransferIdle(30);
-			cameraTransferStop();
-			inFlight = false;
-			const AlbumExit result = albumMode();
-			if (result == AlbumExit::PowerExit) {
-				exitRequested = true;
-				break;
-			}
-			if (!cameraActivate(cam))
-				fatalError("The camera did not start.");
-			clearPreviewPages();
-			status.clear();
-			drawCameraScreen(cam, status.c_str());
-		}
-
-		swiWaitForVBlank();
-	}
-}
-
-} // namespace
-
 //---------------------------------------------------------------------------------
 int main(int argc, char **argv) {
 //---------------------------------------------------------------------------------
@@ -536,7 +483,7 @@ int main(int argc, char **argv) {
 
 	useTwlCfg = (dsiFeatures() && (*(u8 *)0x02000400 != 0) && (*(u8 *)0x02000401 == 0) && (*(u8 *)0x02000402 == 0) && (*(u8 *)0x02000404 == 0) && (*(u8 *)0x02000448 != 0));
 
-	initVideo();
+	uiInit();
 
 	if (sys().fatInitOk())
 		ms().loadSettings();
@@ -552,7 +499,7 @@ int main(int argc, char **argv) {
 
 	keysSetRepeat(25, 5);
 
-	centred(10, "Starting camera...");
+	uiStatus("Starting...");
 	if (!cameraInit()) {
 		if (cameraLastError() == CAM_ERR_NO_ACCESS)
 			fatalError("This needs a Nintendo DSi", "running in DSi mode.");
