@@ -81,6 +81,7 @@ extern bool dboxInFrame;
 extern bool dboxStopped;
 extern bool dbox_showIcon;
 extern bool dbox_selectMenu;
+extern bool dbox_selectMenuCamera;
 
 extern bool applaunch;
 extern bool dsModeForced;
@@ -1360,6 +1361,35 @@ void launchManual(void) {
 	stop();
 }
 
+// nerdMod: launches the Camera app (camera.srldr) the same way the manual is launched.
+// camera.srldr is installed next to the other .srldr files, so it is updated together with
+// them. runNdsFile() with dsModeSwitch=false leaves the console in DSi mode (SCFG untouched);
+// the Camera app itself refuses to touch the camera hardware if SCFG_EXT does not expose it.
+static const char *cameraSrldrPath(void) {
+	return sys().isRunFromSD() ? "sd:/_nds/TWiLightMenu/camera.srldr" : "fat:/_nds/TWiLightMenu/camera.srldr";
+}
+
+void launchCamera(void) {
+	snd().playLaunch();
+	controlTopBright = true;
+
+	fadeType = false;		  // Fade to white
+	snd().fadeOutStream();
+	for (int i = 0; i < 60; i++) {
+		bgOperations(true);
+	}
+	snd().stopStream();
+	ms().saveSettings();
+	// Launch camera
+	argarray.push_back((char*)cameraSrldrPath());
+	int err = runNdsFile(argarray[0], argarray.size(), (const char**)&argarray[0], sys().isRunFromSD(), true, false, false, true, true, false, -1);
+	char text[32];
+	snprintf(text, sizeof(text), STR_START_FAILED_ERROR.c_str(), err);
+	fadeType = true;
+	printLarge(false, 4, 4, text);
+	stop();
+}
+
 void exitToSystemMenu(void) {
 	snd().playLaunch();
 	controlTopBright = true;
@@ -2621,6 +2651,17 @@ bool selectMenu(void) {
 			}
 		}
 	}
+	// nerdMod: "Open Camera" goes right above "Open Manual". Only on a DSi (not in kiosk mode, not
+	// on a 3DS where the DSi cameras do not exist) and only if camera.srldr is installed.
+	dbox_selectMenuCamera = false;
+	if (!ms().kioskMode && dsiFeatures() && ms().consoleModel < 2 && maxCursors < 4 && assignedOp[maxCursors] == 4
+	 && access(cameraSrldrPath(), F_OK) == 0) {
+		assignedOp[maxCursors + 1] = 4;
+		assignedOp[maxCursors] = 5;
+		maxCursors++;
+		selIconYpos -= 14;
+		dbox_selectMenuCamera = true;
+	}
 	if (ms().theme == TWLSettings::EThemeSaturn) {
 		while (!screenFadedIn()) { bgOperations(true); }
 		dbox_selectMenu = true;
@@ -2655,6 +2696,8 @@ bool selectMenu(void) {
 				printSmall(false, textXpos, textYpos, "Start GBA Mode", align, pal);
 			} else if (assignedOp[i] == 4) {
 				printSmall(false, textXpos, textYpos, STR_OPEN_MANUAL, align, pal);
+			} else if (assignedOp[i] == 5) {
+				printSmall(false, textXpos, textYpos, STR_OPEN_CAMERA, align, pal);
 			}
 			textYpos += 28;
 		}
@@ -2705,6 +2748,9 @@ bool selectMenu(void) {
 			case 4:
 				launchManual();
 				break;
+			case 5:
+				launchCamera();
+				break;
 			}
 		}
 		if ((pressed & KEY_B) || (pressed & KEY_SELECT)) {
@@ -2713,6 +2759,7 @@ bool selectMenu(void) {
 		}
 	};
 	showdialogbox = false;
+	dbox_selectMenuCamera = false;
 	if (ms().theme == TWLSettings::EThemeSaturn) {
 		fadeType = false;	   // Fade to black
 		for (int i = 0; i < 25; i++) {

@@ -127,6 +127,7 @@ STRING(SWITCH_TO_SLOT_1, "Switch to Slot-1 microSD")
 STRING(NO_SLOT_1, "No Slot-1 card inserted")
 STRING(LAUNCH_SLOT_1, "Launch Slot-1 card")
 STRING(OPEN_MANUAL, "Open Manual")
+STRING(OPEN_CAMERA, "Open Camera")
 STRING(SELECT_B_BACK_A_SELECT, "SELECT/\\B Back, \\A Select")
 
 // AP

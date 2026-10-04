@@ -167,6 +167,7 @@ bool dboxInFrame = false;
 bool dboxStopped = true;
 bool dbox_showIcon = false;
 bool dbox_selectMenu = false;
+bool dbox_selectMenuCamera = false; // nerdMod: SELECT menu has an extra "Open Camera" row
 float dbox_movespeed = 22;
 float dbox_Ypos = -192;
 int bottomScreenBrightness = 255;
@@ -1152,6 +1153,9 @@ void vBlankHandler() {
 						}
 					}
 				}
+				if (dbox_selectMenuCamera) {
+					selIconYpos -= 14; // one more row: keep the list centred like the text does
+				}
 				if (!sys().isRegularDS()) {
 					glSprite(selIconXpos, (ms().theme == TWLSettings::EThemeSaturn ? 0 : dbox_Ypos) + selIconYpos, GL_FLIP_NONE,
 						 &tex().cornerButtonImage()[1]); // System Menu
@@ -1184,6 +1188,20 @@ void vBlankHandler() {
 				} else {*/
 					glSprite(selIconXpos, (ms().theme == TWLSettings::EThemeSaturn ? 0 : dbox_Ypos) + selIconYpos, GL_FLIP_NONE,
 						 &tex().smallCartImage()[3]); // GBA Mode
+					selIconYpos += 28;
+				}
+				if (dbox_selectMenuCamera) {
+					// Camera row. The themes have no camera graphic (and must not need one), so a
+					// small neutral glyph is drawn from boxes instead of adding theme assets.
+					const int cx = selIconXpos;
+					const int cy = (ms().theme == TWLSettings::EThemeSaturn ? 0 : dbox_Ypos) + selIconYpos;
+					glBoxFilled(cx + 3, cy + 9, cx + 28, cy + 26, RGB15(7, 8, 11));    // body
+					glBoxFilled(cx + 9, cy + 6, cx + 17, cy + 9, RGB15(7, 8, 11));     // viewfinder bump
+					glBoxFilled(cx + 10, cy + 11, cx + 22, cy + 24, RGB15(24, 25, 27)); // lens ring
+					glBoxFilled(cx + 12, cy + 13, cx + 20, cy + 22, RGB15(4, 10, 22));  // lens glass
+					glBoxFilled(cx + 13, cy + 14, cx + 15, cy + 16, RGB15(31, 31, 31)); // glint
+					glBoxFilled(cx + 24, cy + 11, cx + 27, cy + 13, RGB15(31, 22, 5));  // flash
+					glColor(RGB15(31, 31, 31));
 					selIconYpos += 28;
 				}
 				glSprite(selIconXpos, (ms().theme == TWLSettings::EThemeSaturn ? 0 : dbox_Ypos) + selIconYpos, GL_FLIP_NONE,
