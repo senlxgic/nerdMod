@@ -1221,7 +1221,10 @@ int settingsMode(void)
 		.option(STR_NINTENDOLOGOCOLOR, STR_DESCRIPTION_NINTENDOLOGOCOLOR, Option::Int(&ms().nintendoLogoColor), {STR_RED, STR_BLUE, STR_MAGENTA, STR_GRAY}, {1, 2, 3, 0})
 		.option(STR_DIRECTORIES, STR_DESCRIPTION_DIRECTORIES_1, Option::Bool(&ms().showDirectories), {STR_SHOW, STR_HIDE}, {true, false})
 		.option(STR_SHOW_HIDDEN, STR_DESCRIPTION_SHOW_HIDDEN_1, Option::Bool(&ms().showHidden), {STR_SHOW, STR_HIDE}, {true, false})
-		.option(STR_SHOW_PHOTO, STR_DESCRIPTION_SHOW_PHOTO, Option::Bool(&ms().showPhoto), {STR_SHOW, STR_HIDE}, {true, false});
+		.option(STR_SHOW_PHOTO, STR_DESCRIPTION_SHOW_PHOTO, Option::Bool(&ms().showPhoto), {STR_SHOW, STR_HIDE}, {true, false})
+		.option("Home Play Stats", "Shows your play time and launches on the left of the home photo when no game is selected.", Option::Bool(&ms().homePlayStats), {STR_SHOW, STR_HIDE}, {true, false})
+		.option("Home Weather", "Shows the last known weather on the right of the home photo. Set the place in sd:/_nds/nerdMod/weather.ini.", Option::Bool(&ms().homeWeather), {STR_SHOW, STR_HIDE}, {true, false})
+		.option("Weather Units", "Temperature unit of the home weather widget.", Option::Bool(&ms().weatherFahrenheit), {"Fahrenheit", "Celsius"}, {true, false});
 
 	if (dsiFeatures()) {
 		guiPage.option(STR_BOXART, STR_DESCRIPTION_BOXART_DSI, Option::Int(&ms().showBoxArt), {STR_NON_CACHED, STR_CACHED, STR_HIDE}, {1, 2, 0});

@@ -324,6 +324,10 @@ public:
 	bool showDirectories;
 	bool showHidden;
 	bool showPhoto;
+	// nerdMod home screen widgets (left: play stats, right: weather)
+	bool homePlayStats;
+	bool homeWeather;
+	bool weatherFahrenheit;
 	int showBoxArt;
 	int filenameDisplay;
 	bool animateDsiIcons;

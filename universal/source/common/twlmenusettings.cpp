@@ -72,6 +72,9 @@ TWLSettings::TWLSettings()
 	showDirectories = true;
 	showHidden = false;
 	showPhoto = true;
+	homePlayStats = true;
+	homeWeather = true;
+	weatherFahrenheit = false;
 	showBoxArt = 1;
 	filenameDisplay = 0;
 	animateDsiIcons = true;
@@ -277,6 +280,9 @@ void TWLSettings::loadSettings()
 	showDirectories = settingsini.GetInt("SRLOADER", "SHOW_DIRECTORIES", showDirectories);
 	showHidden = settingsini.GetInt("SRLOADER", "SHOW_HIDDEN", showHidden);
 	showPhoto = settingsini.GetInt("SRLOADER", "SHOW_PHOTO", showPhoto);
+	homePlayStats = settingsini.GetInt("NERDMOD", "HOME_PLAY_STATS", homePlayStats);
+	homeWeather = settingsini.GetInt("NERDMOD", "HOME_WEATHER", homeWeather);
+	weatherFahrenheit = settingsini.GetInt("NERDMOD", "WEATHER_FAHRENHEIT", weatherFahrenheit);
 	showBoxArt = settingsini.GetInt("SRLOADER", "SHOW_BOX_ART", showBoxArt);
 	if (!dsiFeatures() && showBoxArt == 2) // Reset to 1 if not in DSi mode
 		showBoxArt = 1;
@@ -468,6 +474,9 @@ void TWLSettings::saveSettings()
 	settingsini.SetInt("SRLOADER", "SHOW_DIRECTORIES", showDirectories);
 	settingsini.SetInt("SRLOADER", "SHOW_HIDDEN", showHidden);
 	settingsini.SetInt("SRLOADER", "SHOW_PHOTO", showPhoto);
+	settingsini.SetInt("NERDMOD", "HOME_PLAY_STATS", homePlayStats);
+	settingsini.SetInt("NERDMOD", "HOME_WEATHER", homeWeather);
+	settingsini.SetInt("NERDMOD", "WEATHER_FAHRENHEIT", weatherFahrenheit);
 	settingsini.SetInt("SRLOADER", "SHOW_BOX_ART", showBoxArt);
 	settingsini.SetInt("SRLOADER", "FILENAME_DISPLAY", filenameDisplay);
 	settingsini.SetInt("SRLOADER", "ANIMATE_DSI_ICONS", animateDsiIcons);

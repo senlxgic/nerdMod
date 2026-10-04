@@ -1,10 +1,22 @@
-test: test_container test_fps test_audio test_audiofmt test_bmpscale test_format
+test: test_container test_fps test_audio test_audiofmt test_bmpscale test_format test_font test_weather test_net test_net
 	./test_container
 	./test_fps
 	./test_audio
 	./test_audiofmt
 	./test_bmpscale
 	./test_format
+	./test_font
+	./test_weather
+	./test_net
+
+test_net: test_net.cpp ../../../universal/include/common/nmnet.h
+	g++ -std=gnu++17 -O1 -g -Wall -Wextra -o $@ test_net.cpp
+
+test_weather: test_weather.cpp ../../../universal/include/common/nmweather.h
+	g++ -std=gnu++17 -O1 -g -Wall -Wextra -o $@ test_weather.cpp
+
+test_font: test_font.cpp ../../../universal/include/common/nmfont.h
+	g++ -std=gnu++17 -O1 -g -Wall -Wextra -o $@ test_font.cpp
 
 test_format: test_format.cpp ../../../universal/include/common/nmformat.h
 	g++ -std=gnu++17 -O1 -g -Wall -Wextra -o $@ test_format.cpp
@@ -25,4 +37,4 @@ test_container: test_container.cpp ../../arm9/source/videoContainer.cpp ../../ar
 	g++ -std=gnu++17 -O1 -g -Wall -Wextra -I. -o $@ test_container.cpp ../../arm9/source/videoContainer.cpp
 
 clean:
-	rm -f test_container test_fps test_audio test_audiofmt test_bmpscale test_format
+	rm -f test_container test_fps test_audio test_audiofmt test_bmpscale test_format test_font test_weather test_net test_font
