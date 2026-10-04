@@ -1,87 +1,217 @@
 name: Build nerdMod
 
-# Reproduces upstream TWiLight Menu++ CI (.github/workflows/nightly.yml):
-# same pinned container, same extra packages, same manual-page download,
-# same `make package`. Nothing is deployed anywhere.
-
 on:
   workflow_dispatch:
   push:
-    branches: ["nerdmod-dev"]
-    paths-ignore:
-      - 'README.md'
-
-env:
-  BASELINE_COMMIT: 68d04c1a621a8d330e7233efcfcb93c94b30a3a6
+    branches:
+      - nerdmod-dev
 
 jobs:
   build:
-    runs-on: ubuntu-latest
-    container: devkitpro/devkitarm:20241104
     name: Build with devkitARM (pinned 20241104)
+    runs-on: ubuntu-latest
+
+    container:
+      image: devkitpro/devkitarm:20241104
+
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+      - name: Checkout source
+        uses: actions/checkout@v5
         with:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Install tools
+      - name: Configure Git
+        shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install p7zip-full python -y
+          set -euxo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
-      - name: Setup environment
+      - name: Verify baseline
+        shell: bash
         run: |
-          git config --global safe.directory '*'
+          set -euxo pipefail
 
-      - name: Record toolchain and source state
-        run: |
-          {
-            echo "## Build info"
-            echo "- Commit: $(git rev-parse HEAD)"
-            echo "- Branch/ref: ${GITHUB_REF_NAME}"
-            echo "- Baseline commit: ${BASELINE_COMMIT}"
-            echo "- Submodules:"
-            git submodule status | sed 's/^/    /'
-            echo "- arm-none-eabi-gcc: $(arm-none-eabi-gcc --version | head -n1)"
-            echo "- DEVKITPRO=${DEVKITPRO} DEVKITARM=${DEVKITARM}"
-            echo "- Changed application files vs baseline (excluding .github):"
-            git diff --stat "${BASELINE_COMMIT}" HEAD -- . ':(exclude).github' | sed 's/^/    /'
-          } | tee -a "$GITHUB_STEP_SUMMARY"
-          dkp-pacman -Q libnds libfat-nds maxmod-nds 2>/dev/null | tee -a "$GITHUB_STEP_SUMMARY" || true
+          echo "Current commit:"
+          git rev-parse HEAD
 
-      - name: Get manual pages
+          echo "Expected nerdMod baseline:"
+          echo "68d04c1a621a8d330e7233efcfcb93c94b30a3a6"
+
+          echo
+          echo "Submodules:"
+          git submodule status
+
+          echo
+          echo "Application-source changes relative to v27.24.1:"
+          git diff --stat v27.24.1 -- . ':(exclude).github'
+
+      - name: Configure archived Debian repositories
+        shell: bash
         run: |
+          set -euxo pipefail
+
+          cat > /etc/apt/sources.list <<'EOF'
+          deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/20241104T000000Z/ bullseye main
+          deb [check-valid-until=no] http://snapshot.debian.org/archive/debian-security/20241104T000000Z/ bullseye-security main
+          EOF
+
+          rm -rf /var/lib/apt/lists/*
+
+          apt-get \
+            -o Acquire::Check-Valid-Until=false \
+            update
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          DEBIAN_FRONTEND=noninteractive \
+          apt-get \
+            -o Acquire::Check-Valid-Until=false \
+            install -y --no-install-recommends \
+            p7zip-full \
+            python \
+            curl \
+            ca-certificates
+
+      - name: Download TWiLight manual pages
+        shell: bash
+        run: |
+          set -euxo pipefail
+
           cd manual/nitrofiles
-          curl -LO https://github.com/DS-Homebrew/twilight-manual/releases/download/pages/pages.7z
-          7z x pages.7z
+
+          curl \
+            --fail \
+            --location \
+            --retry 3 \
+            --output pages.7z \
+            https://github.com/DS-Homebrew/twilight-manual/releases/download/pages/pages.7z
+
+          7z x -y pages.7z
           rm pages.7z
 
-      - name: Build TWiLightMenu++
+      - name: Show toolchain information
+        shell: bash
         run: |
-          set -eo pipefail
-          start=$(date +%s)
-          make package 2>&1 | tee build.log
-          echo "Build duration: $(( $(date +%s) - start )) s" | tee -a "$GITHUB_STEP_SUMMARY"
+          set -euxo pipefail
 
-      - name: Warning/error summary and artifact sizes
+          echo "devkitARM:"
+          ${DEVKITARM}/bin/arm-none-eabi-gcc --version || true
+
+          echo
+          echo "Python:"
+          python --version || true
+
+          echo
+          echo "7-Zip:"
+          7z | head -n 3 || true
+
+      - name: Build nerdMod baseline
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          START_TIME=$(date +%s)
+
+          make package 2>&1 | tee build.log
+
+          END_TIME=$(date +%s)
+          BUILD_SECONDS=$((END_TIME - START_TIME))
+
+          echo "BUILD_SECONDS=$BUILD_SECONDS" >> "$GITHUB_ENV"
+          echo "Build completed in ${BUILD_SECONDS} seconds."
+
+      - name: Verify build output
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          if [ ! -d "7zfile" ]; then
+            echo "ERROR: 7zfile directory was not produced."
+            exit 1
+          fi
+
+          echo "Generated binaries:"
+          find 7zfile \
+            -type f \
+            \( -name "*.srldr" -o -name "BOOT.NDS" \) \
+            -exec stat --printf='%s bytes  %n\n' {} \; \
+            | sort -k3
+
+      - name: Generate SHA-256 hashes
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          find 7zfile -type f -print0 \
+            | sort -z \
+            | xargs -0 sha256sum \
+            > SHA256SUMS.txt
+
+      - name: Count build warnings and errors
+        if: always()
+        shell: bash
+        run: |
+          WARNINGS=$(grep -Eic 'warning:' build.log 2>/dev/null || true)
+          ERRORS=$(grep -Eic 'error:' build.log 2>/dev/null || true)
+
+          echo "WARNING_COUNT=$WARNINGS" >> "$GITHUB_ENV"
+          echo "ERROR_COUNT=$ERRORS" >> "$GITHUB_ENV"
+
+      - name: Create build summary
+        if: always()
+        shell: bash
         run: |
           {
-            echo "## Build log counts"
-            echo "- warnings: $(grep -ci 'warning:' build.log || true)"
-            echo "- errors: $(grep -ci 'error:' build.log || true)"
-            echo "## 7zfile contents (bytes)"
-            echo '```'
-            find 7zfile -type f \( -name '*.srldr' -o -iname 'BOOT.NDS' -o -name '*.nds' -o -name '*.dsi' -o -name '*.app' \) -printf '%s\t%p\n' | sort -k2
-            echo '```'
-          } | tee -a "$GITHUB_STEP_SUMMARY"
-          (cd 7zfile && find . -type f ! -name .gitkeep -exec sha256sum {} \; | sort -k2 > ../SHA256SUMS.txt)
-          cp SHA256SUMS.txt build.log 7zfile/
+            echo "# nerdMod baseline build"
+            echo
+            echo "## Source"
+            echo
+            echo "- Commit: \`${GITHUB_SHA}\`"
+            echo "- Baseline: \`v27.24.1\`"
+            echo "- Baseline commit: \`68d04c1a621a8d330e7233efcfcb93c94b30a3a6\`"
+            echo "- Container: \`devkitpro/devkitarm:20241104\`"
+            echo
+            echo "## Build"
+            echo
+            echo "- Duration: \`${BUILD_SECONDS:-unknown} seconds\`"
+            echo "- Compiler warnings: \`${WARNING_COUNT:-unknown}\`"
+            echo "- Compiler errors: \`${ERROR_COUNT:-unknown}\`"
+            echo
+            echo "## Important binaries"
+            echo
+            echo '```text'
 
-      - name: Upload 7zfile artifact
+            if [ -d 7zfile ]; then
+              find 7zfile \
+                -type f \
+                \( -name "*.srldr" -o -name "BOOT.NDS" \) \
+                -exec stat --printf='%s bytes  %n\n' {} \; \
+                | sort -k3
+            else
+              echo "No 7zfile directory produced."
+            fi
+
+            echo '```'
+            echo
+            echo "## Application diff vs upstream baseline"
+            echo
+            echo '```text'
+            git diff --stat v27.24.1 -- . ':(exclude).github' || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload nerdMod baseline
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: nerdMod-baseline-v27.24.1
-          path: 7zfile/
+          path: |
+            7zfile/
+            SHA256SUMS.txt
+            build.log
           if-no-files-found: error
+          retention-days: 14
