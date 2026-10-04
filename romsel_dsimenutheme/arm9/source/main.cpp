@@ -39,6 +39,7 @@
 #include "errorScreen.h"
 #include "esrbSplash.h"
 #include "fileBrowse.h"
+#include "virtualEntries.h"
 #include "gbaswitch.h"
 #include "ndsheaderbanner.h"
 #include "perGameSettings.h"
@@ -1300,6 +1301,7 @@ int dsiMenuTheme(void) {
 			extensionList.erase(toErase, extensionList.end());
 		}
 
+		restoreLibraryHomeFolder(); // back to the folder the user was browsing after a flattened game was launched
 		char path[256] = {0};
 		snprintf(path, sizeof(path), "%s", ms().romfolder[ms().secondaryDevice].c_str());
 		// Set directory

@@ -1,5 +1,8 @@
 #include "fileBrowse.h"
+#include "dirEntry.h"
 #include "dirIndex.h"
+#include "gameLibrary.h"
+#include "virtualEntries.h"
 #include <algorithm>
 #include <dirent.h>
 #include <math.h>
@@ -158,15 +161,7 @@ std::string gameOrderIniPath, recentlyPlayedIniPath, timesPlayedIniPath;
 
 static bool inSelectMenu = false;
 
-struct DirEntry {
-	DirEntry(std::string name, bool isDirectory, int position, int customPos) : name(name), isDirectory(isDirectory), position(position), customPos(customPos) {}
-	DirEntry() {}
-
-	std::string name;
-	bool isDirectory;
-	int position;
-	bool customPos;
-};
+// DirEntry lives in dirEntry.h (it also describes virtual entries, see virtualEntries.h)
 
 char path[PATH_MAX] = {0};
 
@@ -292,6 +287,20 @@ void getDirectoryContents(std::vector<DirEntry> &dirContents, const std::vector<
 		dirInfoIniFound = false;
 	}
 
+	// nerdMod: "All Games" / "Mixed" library views. Games from sub-folders of a home folder are listed as
+	// virtual entries; they are launched from their real folder (see EntryCwdScope).
+	std::vector<std::string> flattenedGames;
+	bool flattenActive = false;
+	char cwdBuf[512];
+	std::string cwdStr;
+	if (getcwd(cwdBuf, sizeof(cwdBuf)))
+		cwdStr = cwdBuf;
+	if (ms().gameLibraryView != TWLSettings::ELibraryFolders && !cwdStr.empty()
+	 && gameLibraryCollect(cwdStr, extensionList, flattenedGames)) {
+		flattenActive = true;
+	}
+	const bool hideFolders = flattenActive && ms().gameLibraryView == TWLSettings::ELibraryAllGames;
+
 	DIR *pdir = opendir(".");
 
 	if (pdir == nullptr) {
@@ -341,7 +350,7 @@ void getDirectoryContents(std::vector<DirEntry> &dirContents, const std::vector<
 					fileStartPos++;
 				}
 				emplaceBackDirContent =
-				((pent->d_type == DT_DIR && strcmp(pent->d_name, ".") != 0 && strcmp(pent->d_name, "..") != 0 && pent->d_name[0] != '_'
+				((pent->d_type == DT_DIR && !hideFolders && strcmp(pent->d_name, ".") != 0 && strcmp(pent->d_name, "..") != 0 && pent->d_name[0] != '_'
 					&& strcmp(pent->d_name, "saves") != 0 && strcmp(pent->d_name, "ramdisks") != 0 && strcmp(pent->d_name, "System Volume Information") != 0)
 					|| nameEndsWith(pent->d_name, extensionList));
 			} else {
@@ -380,6 +389,18 @@ void getDirectoryContents(std::vector<DirEntry> &dirContents, const std::vector<
 					fileStartPos++;
 			}
 		}
+		if (flattenActive) {
+			const size_t limit = (dsiFeatures() || sys().dsDebugRam()) ? 1024 : 512;
+			for (std::string &rel : flattenedGames) {
+				if ((size_t)file_count > limit)
+					break;
+				dirContents.emplace_back(std::move(rel), false, file_count, false);
+				dirContents.back().kind = ENTRY_FLATTENED;
+				file_count++;
+			}
+			flattenedGames.clear();
+			flattenedGames.shrink_to_fit();
+		}
 		recalculateBoxesCount();
 
 		if (ms().sortMethod == TWLSettings::ESortAlphabetical) { // Alphabetical
@@ -407,8 +428,26 @@ void getDirectoryContents(std::vector<DirEntry> &dirContents, const std::vector<
 			CIniFile timesPlayedIni(timesPlayedIniPath);
 
 			getcwd(path, PATH_MAX);
+			std::string flatDirPrefix, flatDirKey; // last real folder resolved for a flattened entry
 			for (DirEntry &dirEntry : dirContents) {
-				dirEntry.position = timesPlayedIni.GetInt(path, dirEntry.name); // 2-arg form: missing = 0, no default insertion
+				if (dirEntry.kind == ENTRY_FLATTENED) {
+					// The play counts of a game are stored under its real folder, exactly as when the
+					// game is launched from there (keys come from getcwd() after chdir()).
+					const std::string prefix = entryDirPrefix(dirEntry.name);
+					if (prefix != flatDirPrefix || flatDirKey.empty()) {
+						flatDirPrefix = prefix;
+						flatDirKey.clear();
+						if (chdir(prefix.c_str()) == 0) {
+							char kb[512];
+							if (getcwd(kb, sizeof(kb)))
+								flatDirKey = kb;
+							chdir(path);
+						}
+					}
+					dirEntry.position = flatDirKey.empty() ? 0 : timesPlayedIni.GetInt(flatDirKey, entryBaseName(dirEntry.name));
+				} else {
+					dirEntry.position = timesPlayedIni.GetInt(path, dirEntry.name); // 2-arg form: missing = 0, no default insertion
+				}
 			}
 
 			std::sort(dirContents.begin(), dirContents.end(), [](const DirEntry &lhs, const DirEntry &rhs) {
@@ -462,6 +501,17 @@ void getDirectoryContents(std::vector<DirEntry> &dirContents, const std::vector<
 			dirContents.insert(dirContents.begin(), {"..", true, backPos, false});
 		}
 		closedir(pdir);
+
+		// Built-in apps (Camera, ...) are the first tiles after the folders, in the folders where the
+		// library "home" is. They do not take part in sorting, so they keep a predictable place.
+		if (!cwdStr.empty() && builtInAppsShownIn(cwdStr)) {
+			const int added = addBuiltInEntries(dirContents, fileStartPos);
+			if (added > 0) {
+				file_count += added;
+				fileStartPos += added; // the "first game" slot (used by the recently-played cursor) is after them
+				recalculateBoxesCount();
+			}
+		}
 	}
 }
 
@@ -1365,11 +1415,17 @@ void launchManual(void) {
 // camera.srldr is installed next to the other .srldr files, so it is updated together with
 // them. runNdsFile() with dsModeSwitch=false leaves the console in DSi mode (SCFG untouched);
 // the Camera app itself refuses to touch the camera hardware if SCFG_EXT does not expose it.
-static const char *cameraSrldrPath(void) {
-	return sys().isRunFromSD() ? "sd:/_nds/TWiLightMenu/camera.srldr" : "fat:/_nds/TWiLightMenu/camera.srldr";
-}
+// Launches a built-in app (see virtualEntries.h) the same way the Manual and the SELECT-menu Camera row are
+// launched: the app's .srldr is a TWL application next to the other .srldr files, so it is updated together
+// with them. runNdsFile() with dsModeSwitch=false leaves the console in DSi mode (SCFG untouched); the Camera
+// app itself refuses to touch the camera hardware if SCFG_EXT does not expose it.
+// Returns false, without touching the screen, if the app is not installed (any more). Does not return when
+// the launch was started.
+static bool launchBuiltInApp(int appId) {
+	if (!builtInAppAvailable(appId))
+		return false;
+	const std::string appPath = builtInAppPath(appId);
 
-void launchCamera(void) {
 	snd().playLaunch();
 	controlTopBright = true;
 
@@ -1380,14 +1436,19 @@ void launchCamera(void) {
 	}
 	snd().stopStream();
 	ms().saveSettings();
-	// Launch camera
-	argarray.push_back((char*)cameraSrldrPath());
+	// Launch the app
+	argarray.push_back(strdup(appPath.c_str()));
 	int err = runNdsFile(argarray[0], argarray.size(), (const char**)&argarray[0], sys().isRunFromSD(), true, false, false, true, true, false, -1);
 	char text[32];
 	snprintf(text, sizeof(text), STR_START_FAILED_ERROR.c_str(), err);
 	fadeType = true;
 	printLarge(false, 4, 4, text);
 	stop();
+	return true;
+}
+
+void launchCamera(void) {
+	launchBuiltInApp(0); // the first (and, for now, only) entry of the registry is the Camera
 }
 
 void exitToSystemMenu(void) {
@@ -2655,7 +2716,7 @@ bool selectMenu(void) {
 	// on a 3DS where the DSi cameras do not exist) and only if camera.srldr is installed.
 	dbox_selectMenuCamera = false;
 	if (!ms().kioskMode && dsiFeatures() && ms().consoleModel < 2 && maxCursors < 4 && assignedOp[maxCursors] == 4
-	 && access(cameraSrldrPath(), F_OK) == 0) {
+	 && builtInAppAvailable(0)) {
 		assignedOp[maxCursors + 1] = 4;
 		assignedOp[maxCursors] = 5;
 		maxCursors++;
@@ -2798,7 +2859,7 @@ void getFileInfo(SwitchState scrn, const vector<vector<DirEntry>> &dirContents, 
 			if (isDirectory[i]) {
 				bnrWirelessIcon[i] = 0;
 			} else {
-				if (extension(std_romsel_filename, {".nds", ".dsi", ".ids", ".srl", ".app", ".argv"})) {
+				if (extension(std_romsel_filename, {".nds", ".dsi", ".ids", ".srl", ".app", ".argv", ".srldr"})) {
 					bnrRomType[i] = 0;
 				} else if (extension(std_romsel_filename, {".xex", ".atr", ".a26", ".a52", ".a78"})) {
 					bnrRomType[i] = 10;
@@ -2866,7 +2927,7 @@ void getFileInfo(SwitchState scrn, const vector<vector<DirEntry>> &dirContents, 
 				if (dsiFeatures() && !ms().macroMode && ms().showBoxArt == 2 && ms().theme != TWLSettings::EThemeHBL && !isDirectory[i]) {
 					snprintf(boxArtPath, sizeof(boxArtPath), "%s:/_nds/TWiLightMenu/boxart/%s.png",
 							 sys().isRunFromSD() ? "sd" : "fat",
-							 dirContents[scrn][i + PAGENUM * 40].name.c_str());
+							 entryBaseName(dirContents[scrn][i + PAGENUM * 40].name));
 					if ((bnrRomType[i] == 0) && !(pathMayExist(boxArtPath) && access(boxArtPath, F_OK) == 0)) {
 						snprintf(boxArtPath, sizeof(boxArtPath), "%s:/_nds/TWiLightMenu/boxart/%s.png",
 								 (sys().isRunFromSD() ? "sd" : "fat"),
@@ -3306,7 +3367,7 @@ std::string browseForFile(const std::vector<std::string_view> extensionList) {
 
 				boxArtFound = ((CURPOS + PAGENUM * 40) < ((int)dirContents[scrn].size()));
 				if (boxArtFound) {
-					boxArtFilename = dirContents[scrn].at(CURPOS + PAGENUM * 40).name.c_str();
+					boxArtFilename = entryBaseName(dirContents[scrn].at(CURPOS + PAGENUM * 40).name);
 
 					logPrint("boxArtFilename: ");
 					logPrint(boxArtFilename);
@@ -3337,6 +3398,7 @@ std::string browseForFile(const std::vector<std::string_view> extensionList) {
 						if (!isDSiWare[CURPOS]) {
 							infoCheckTimer++;
 							if (infoCheckTimer == 30) {
+								EntryCwdScope entryScope(&dirContents[scrn].at(CURPOS + PAGENUM * 40));
 								if (!dsiBinariesChecked) {
 									hasDsiBinaries = checkDsiBinaries(dirContents[scrn].at(CURPOS + PAGENUM * 40).name.c_str(), CURPOS);
 								}
@@ -3403,7 +3465,7 @@ std::string browseForFile(const std::vector<std::string_view> extensionList) {
 				checkedDSiWareCompatibleB4DS = false;
 				dsiWareRAMLimitMsgPrepped = false;
 				infoCheckTimer = 0;
-			} else if ((pressed & KEY_UP) && (PAGENUM > 0 || CURPOS > 0 || !backFound) && (ms().theme != TWLSettings::EThemeSaturn && ms().theme != TWLSettings::EThemeHBL) && !dirInfoIniFound && (ms().sortMethod == 4) && (CURPOS + PAGENUM * 40 < ((int)dirContents[scrn].size()))) { // Move apps (DSi & 3DS themes)
+			} else if ((pressed & KEY_UP) && (PAGENUM > 0 || CURPOS > 0 || !backFound) && (ms().theme != TWLSettings::EThemeSaturn && ms().theme != TWLSettings::EThemeHBL) && !dirInfoIniFound && (ms().sortMethod == 4) && (CURPOS + PAGENUM * 40 < ((int)dirContents[scrn].size())) && dirContents[scrn][CURPOS + PAGENUM * 40].kind != ENTRY_BUILTIN) { // Move apps (DSi & 3DS themes)
 				bannerTextShown = false; // Redraw the title when done
 				showSTARTborder = false;
 				currentBg = 2;
@@ -3909,7 +3971,16 @@ std::string browseForFile(const std::vector<std::string_view> extensionList) {
 			if ((((pressed & KEY_A) || (pressed & KEY_START) || (ms().theme == TWLSettings::ETheme3DS && (pressed & KEY_TOUCH) && touch.py > 171)) && bannerTextShown && showSTARTborder) || gameTapped) {
 				bannerTextShown = false; // Redraw title when done
 				DirEntry *entry = &dirContents[scrn].at(CURPOS + PAGENUM * 40);
-				if (entry->isDirectory) {
+				if (entry->kind == ENTRY_BUILTIN) {
+					// A built-in app (Camera, ...): launch its .srldr through the usual launch path.
+					// This only returns if it could not be launched.
+					if (!launchBuiltInApp(entry->appId)) {
+						// It vanished (file removed, SD card swapped): list again without its tile
+						snd().playWrong();
+						gameTapped = false;
+						return "null";
+					}
+				} else if (entry->isDirectory) {
 					// Enter selected directory
 					(ms().theme == TWLSettings::EThemeSaturn) ? snd().playLaunch() : snd().playSelect();
 					if (ms().theme != TWLSettings::EThemeSaturn && ms().theme != TWLSettings::EThemeHBL) {
@@ -3941,6 +4012,14 @@ std::string browseForFile(const std::vector<std::string_view> extensionList) {
 					settingsChanged = false;
 					return "null";
 				} else {
+					// Flattened games behave like a normal entry of their real folder from here on
+					EntryCwdScope entryScope(entry);
+					if (entryScope.active() && access(entry->name.c_str(), F_OK) != 0) {
+						// The library is out of date (the game was moved or deleted): forget it and re-list
+						snd().playWrong();
+						gameLibraryInvalidate();
+						return "null";
+					}
 					if (isValid[CURPOS] && !isTwlm[CURPOS]) {
 						loadPerGameSettings(dirContents[scrn].at(CURPOS + PAGENUM * 40).name);
 					}
@@ -4292,6 +4371,7 @@ std::string browseForFile(const std::vector<std::string_view> extensionList) {
 						}
 
 						// Return the chosen file
+						entryScope.commitLaunch();
 						return entry->name;
 					}
 				}
@@ -4445,7 +4525,8 @@ std::string browseForFile(const std::vector<std::string_view> extensionList) {
 
 			// (un)Hide file/folder
 			if ((pressed & KEY_X) && !ms().kioskMode && !ms().preventDeletion && bannerTextShown && showSTARTborder
-			&& dirContents[scrn].at(CURPOS + PAGENUM * 40).name != "..") {
+			&& dirContents[scrn].at(CURPOS + PAGENUM * 40).name != ".."
+			&& dirContents[scrn].at(CURPOS + PAGENUM * 40).kind != ENTRY_BUILTIN) {
 				DirEntry *entry = &dirContents[scrn].at((PAGENUM * 40) + (CURPOS));
 				bool unHide = (FAT_getAttr(entry->name.c_str()) & ATTR_HIDDEN || (strncmp(entry->name.c_str(), ".", 1) == 0 && entry->name != ".."));
 				if (ms().theme == TWLSettings::EThemeSaturn) {
@@ -4527,6 +4608,8 @@ std::string browseForFile(const std::vector<std::string_view> extensionList) {
 							}
 							whiteScreen = true;
 						}
+						if (dirContents[scrn].at(CURPOS + PAGENUM * 40).kind == ENTRY_FLATTENED)
+							gameLibraryInvalidate();
 						remove(dirContents[scrn]
 							   .at(CURPOS + PAGENUM * 40)
 							   .name.c_str()); // Remove game/folder
@@ -4562,6 +4645,9 @@ std::string browseForFile(const std::vector<std::string_view> extensionList) {
 							}
 							whiteScreen = true;
 						}
+
+						if (entry->kind == ENTRY_FLATTENED)
+							gameLibraryInvalidate(); // the visible set of games changes
 
 						// Remove leading . if it exists
 						if ((strncmp(entry->name.c_str(), ".", 1) == 0 && entry->name != "..")) {
@@ -4611,7 +4697,9 @@ std::string browseForFile(const std::vector<std::string_view> extensionList) {
 				bannerTextShown = false;
 			}
 
-			if ((pressed & KEY_Y) && !ms().kioskMode && isValid[CURPOS] && !isTwlm[CURPOS] && !isDirectory[CURPOS] && bannerTextShown && showSTARTborder) {
+			if ((pressed & KEY_Y) && !ms().kioskMode && isValid[CURPOS] && !isTwlm[CURPOS] && !isDirectory[CURPOS] && bannerTextShown && showSTARTborder
+			&& dirContents[scrn].at(CURPOS + PAGENUM * 40).kind != ENTRY_BUILTIN) {
+				EntryCwdScope entryScope(&dirContents[scrn].at(CURPOS + PAGENUM * 40));
 				perGameSettings(dirContents[scrn].at(CURPOS + PAGENUM * 40).name, &hasDsiBinaries, &dsiBinariesChecked);
 				bannerTextShown = false;
 			}

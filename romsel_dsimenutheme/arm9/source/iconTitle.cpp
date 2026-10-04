@@ -223,8 +223,11 @@ void getGameInfo(bool isDir, const char *name, int num, bool fromArgv) {
 		toncset(&banner, 0, sizeof(sNDSBannerExt));
 		bool customIconGood = false;
 
+		// Custom icons are looked up by plain file name (flattened/built-in entries carry a path)
+		const char *iconName = strrchr(name, '/') ? strrchr(name, '/') + 1 : name;
+
 		// First try banner bin
-		snprintf(customIconPath, sizeof(customIconPath), "%s:/_nds/TWiLightMenu/icons/%s.bin", sys().isRunFromSD() ? "sd" : "fat", name);
+		snprintf(customIconPath, sizeof(customIconPath), "%s:/_nds/TWiLightMenu/icons/%s.bin", sys().isRunFromSD() ? "sd" : "fat", iconName);
 		if (pathMayExist(customIconPath) && access(customIconPath, F_OK) == 0) {
 			customIcon[num] = 2; // custom icon is a banner bin
 			FILE *file = fopen(customIconPath, "rb");
@@ -266,7 +269,7 @@ void getGameInfo(bool isDir, const char *name, int num, bool fromArgv) {
 			}
 		} else if (customIcon[num] == 0) {
 			// If no banner bin, try png
-			snprintf(customIconPath, sizeof(customIconPath), "%s:/_nds/TWiLightMenu/icons/%s.png", sys().isRunFromSD() ? "sd" : "fat", name);
+			snprintf(customIconPath, sizeof(customIconPath), "%s:/_nds/TWiLightMenu/icons/%s.png", sys().isRunFromSD() ? "sd" : "fat", iconName);
 			customIcon[num] = (pathMayExist(customIconPath) && access(customIconPath, F_OK) == 0);
 			if (customIcon[num]) {
 				std::vector<unsigned char> image;
@@ -432,7 +435,7 @@ void getGameInfo(bool isDir, const char *name, int num, bool fromArgv) {
 		fread(gameTid[num], 1, 4, fp);
 
 		fclose(fp);
-	} else if (extension(name, {".nds", ".dsi", ".ids", ".srl", ".app"})) {
+	} else if (extension(name, {".nds", ".dsi", ".ids", ".srl", ".app", ".srldr"})) {
 		// this is an nds/app file!
 		FILE *fp;
 
@@ -625,7 +628,8 @@ void getGameInfo(bool isDir, const char *name, int num, bool fromArgv) {
 
 		if (ndsHeader.dsi_flags & BIT(2)) {
 			{
-				std::string filename = name;
+				// Flattened entries carry their folder: saves live next to the real file
+				std::string filename = strrchr(name, '/') ? strrchr(name, '/') + 1 : name;
 
 				extern int getSaveNo (std::string filename);
 				getSaveNo(filename);
@@ -633,6 +637,10 @@ void getGameInfo(bool isDir, const char *name, int num, bool fromArgv) {
 				extern void RemoveTrailingSlashes(std::string &path);
 				std::string romFolderNoSlash = ms().romfolder[ms().secondaryDevice];
 				RemoveTrailingSlashes(romFolderNoSlash);
+				if (strrchr(name, '/') && !strstr(name, ":/")) {
+					// relative path of a flattened entry: "Action/Game.nds" -> <romfolder>/Action
+					romFolderNoSlash += "/" + std::string(name, strrchr(name, '/') - name);
+				}
 
 				std::string typeToReplace = filename.substr(filename.rfind('.'));
 
@@ -991,6 +999,12 @@ static inline std::u16string splitLongDialogTitle(std::string_view text) {
 }
 
 void titleUpdate(bool isDir, std::string_view name, int num) {
+	if (!isDir) {
+		// Flattened entries carry their folder; show just the file name
+		const size_t slash = name.rfind('/');
+		if (slash != std::string_view::npos)
+			name = name.substr(slash + 1);
+	}
 	const bool theme_showdialogbox = (showdialogbox || (ms().theme == TWLSettings::EThemeSaturn && currentBg == 1) || (ms().theme == TWLSettings::EThemeHBL && dbox_showIcon));
 	if (isDir) {
 		if (theme_showdialogbox) {

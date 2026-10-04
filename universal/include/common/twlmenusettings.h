@@ -227,6 +227,14 @@ public:
 		ESortCustom = 4
 	};
 
+	// nerdMod: how the DSi menu lists games (see romsel_dsimenutheme/gameLibrary.cpp)
+	enum TLibraryView : int
+	{
+		ELibraryFolders = 0, // existing behaviour: browse folders
+		ELibraryAllGames = 1, // games from the library roots flattened into one list
+		ELibraryMixed = 2     // folders are kept and flattened games are listed too
+	};
+
 	enum TSoundFreq : bool
 	{
 		EFreq32KHz = false,
@@ -309,6 +317,9 @@ public:
 	//int snesEmulator;
 	bool updateRecentlyPlayedList;
 	TSortMethod sortMethod;
+	TLibraryView gameLibraryView;
+	bool libraryRefresh;
+	std::string libraryReturnHome[2];
 	bool hideEmptyBoxes;
 	bool showDirectories;
 	bool showHidden;

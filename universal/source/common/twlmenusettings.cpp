@@ -66,6 +66,8 @@ TWLSettings::TWLSettings()
 	//snesEmulator = true;
 	updateRecentlyPlayedList = true;
 	sortMethod = ESortAlphabetical;
+	gameLibraryView = ELibraryFolders;
+	libraryRefresh = false;
 	hideEmptyBoxes = false;
 	showDirectories = true;
 	showHidden = false;
@@ -260,6 +262,12 @@ void TWLSettings::loadSettings()
 	//snesEmulator = settingsini.GetInt("SRLOADER", "SNES_EMULATOR", snesEmulator);
 	updateRecentlyPlayedList = settingsini.GetInt("SRLOADER", "UPDATE_RECENTLY_PLAYED_LIST", updateRecentlyPlayedList);
 	sortMethod = (TSortMethod)settingsini.GetInt("SRLOADER", "SORT_METHOD", sortMethod);
+	gameLibraryView = (TLibraryView)settingsini.GetInt("NERDMOD", "GAME_LIBRARY_VIEW", gameLibraryView);
+	if (gameLibraryView < ELibraryFolders || gameLibraryView > ELibraryMixed)
+		gameLibraryView = ELibraryFolders;
+	libraryRefresh = settingsini.GetInt("NERDMOD", "LIBRARY_REFRESH", libraryRefresh);
+	libraryReturnHome[0] = settingsini.GetString("NERDMOD", "LIBRARY_RETURN_HOME", "");
+	libraryReturnHome[1] = settingsini.GetString("NERDMOD", "SECONDARY_LIBRARY_RETURN_HOME", "");
 	hideEmptyBoxes = settingsini.GetInt("SRLOADER", "HIDE_EMPTY_BOXES", hideEmptyBoxes);
 	showDirectories = settingsini.GetInt("SRLOADER", "SHOW_DIRECTORIES", showDirectories);
 	showHidden = settingsini.GetInt("SRLOADER", "SHOW_HIDDEN", showHidden);
@@ -446,6 +454,10 @@ void TWLSettings::saveSettings()
 	// settingsini.SetInt("SRLOADER", "SNES_EMULATOR", snesEmulator);
 	settingsini.SetInt("SRLOADER", "UPDATE_RECENTLY_PLAYED_LIST", updateRecentlyPlayedList);
 	settingsini.SetInt("SRLOADER", "SORT_METHOD", sortMethod);
+	settingsini.SetInt("NERDMOD", "GAME_LIBRARY_VIEW", gameLibraryView);
+	settingsini.SetInt("NERDMOD", "LIBRARY_REFRESH", libraryRefresh);
+	settingsini.SetString("NERDMOD", "LIBRARY_RETURN_HOME", libraryReturnHome[0]);
+	settingsini.SetString("NERDMOD", "SECONDARY_LIBRARY_RETURN_HOME", libraryReturnHome[1]);
 	settingsini.SetInt("SRLOADER", "HIDE_EMPTY_BOXES", hideEmptyBoxes);
 	settingsini.SetInt("SRLOADER", "SHOW_DIRECTORIES", showDirectories);
 	settingsini.SetInt("SRLOADER", "SHOW_HIDDEN", showHidden);
