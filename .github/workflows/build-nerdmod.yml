@@ -292,7 +292,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: nerdMod-phase2b1-${{ env.SHORT_SHA }}
+          name: nerdMod-phase2c-${{ env.SHORT_SHA }}
           path: |
             7zfile/
             SHA256SUMS.txt
