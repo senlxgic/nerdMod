@@ -5,6 +5,7 @@
 #include "virtualEntries.h"
 #include "graphics/gameArt.h"
 #include "nmdiag.h"
+#include "playStats.h"
 #include <algorithm>
 #include <dirent.h>
 #include <math.h>
@@ -3492,6 +3493,7 @@ std::string browseForFile(const std::vector<std::string_view> extensionList) {
 	gameOrderIniPath = std::string(sys().isRunFromSD() ? "sd" : "fat") + ":/_nds/TWiLightMenu/extras/gameorder.ini";
 	recentlyPlayedIniPath = std::string(sys().isRunFromSD() ? "sd" : "fat") + ":/_nds/TWiLightMenu/extras/recentlyplayed.ini";
 	timesPlayedIniPath = std::string(sys().isRunFromSD() ? "sd" : "fat") + ":/_nds/TWiLightMenu/extras/timesplayed.ini";
+	playstats::init();
 
 	bool displayBoxArt = ms().showBoxArt;
 
@@ -4756,6 +4758,7 @@ std::string browseForFile(const std::vector<std::string_view> extensionList) {
 							CIniFile timesPlayedIni(timesPlayedIniPath);
 							timesPlayedIni.SetInt(path, entry->name, (timesPlayedIni.GetInt(path, entry->name, 0) + 1));
 							timesPlayedIni.SaveIniFile(timesPlayedIniPath);
+							playstats::recordLaunch(path, entry->name); // nerdMod: pending launch, settled at the next menu start
 
 							if (ms().sortMethod == TWLSettings::ESortRecent) {
 								// Set cursor pos to the first slot that isn't a directory so it won't be misplaced with recent sort
