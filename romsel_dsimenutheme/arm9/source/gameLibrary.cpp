@@ -190,6 +190,20 @@ void libraryRoots(const std::string &dev, std::vector<std::string> &roots) {
 		if (!covered)
 			roots.push_back(def);
 	}
+	// A root inside another root would list its games twice: keep only the outermost ones
+	for (size_t i = 0; i < roots.size();) {
+		bool inside = false;
+		for (size_t j = 0; j < roots.size() && !inside; j++) {
+			if (i == j)
+				continue;
+			const std::string outer = withSlash(roots[j]);
+			inside = strncasecmp(roots[i].c_str(), outer.c_str(), outer.size()) == 0 && roots[i].size() > outer.size();
+		}
+		if (inside)
+			roots.erase(roots.begin() + i);
+		else
+			i++;
+	}
 }
 
 uint32_t scanKey(const std::string &dev, const std::vector<std::string> &roots, const std::vector<std::string_view> &exts) {

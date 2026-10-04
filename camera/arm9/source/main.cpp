@@ -28,6 +28,7 @@
 #include "app.h"
 #include "camera.h"
 #include "gallery.h"
+#include "filters.h"
 #include "photos.h"
 #include "ui.h"
 #include "video.h"
@@ -228,6 +229,7 @@ void cameraMode() {
 		fatalError("The camera did not start.", "Leave and open Camera again.");
 
 	bool videoMode = false;
+	fx::set(fx::NORMAL);
 	uiTopSetCamera(cam == CAM_INNER);
 	uiTopSetMode(false);
 	showCameraButtons(false, false);
@@ -246,6 +248,11 @@ void cameraMode() {
 		uiStatus(m);
 		lastStatus = m;
 		messageFrames = 150;
+	};
+	// The idle status line: the active effect, else the mode
+	auto idleLabel = [&]() -> const char * {
+		const char *fxLabel = fx::statusLabel(fx::current());
+		return fxLabel ? fxLabel : (videoMode ? "Video" : "Ready");
 	};
 	auto setIdleStatus = [&](const char *m) {
 		if (m != lastStatus) {
@@ -282,6 +289,8 @@ void cameraMode() {
 		setIdleStatus("Recording");
 	};
 
+	setMessage("D-pad: effects");
+
 	while (!exitRequested) {
 		// ---- preview: double-buffered so the picture never tears. While recording the frames land in RAM
 		//      buffers first (see video.h) and are copied to the screen page.
@@ -292,8 +301,16 @@ void cameraMode() {
 				if (rec::active()) {
 					rec::frameCaptured();
 					const u16 *f = rec::lastFrame();
-					if (f)
+					if (f) {
+						if (fx::current() != fx::NORMAL) {
+							// effect on the RAM frame: it is what gets saved in the video and what the screen shows
+							fx::applyFrame((u16 *)f);
+							DC_FlushRange(f, nvid::FRAME_BYTES); // DMA reads RAM, not the cache
+						}
 						dmaCopyHalfWords(3, f, uiTopPage(back), nvid::FRAME_BYTES);
+					}
+				} else {
+					fx::applyFrame(uiTopPage(back)); // live effect on the finished preview page (no-op for NORMAL)
 				}
 				front = back;
 				uiTopShowPage(front);
@@ -361,6 +378,28 @@ void cameraMode() {
 				uiPressFeedback(action);
 		}
 
+		// ---- effects: D-pad LEFT/RIGHT, or a tap on the status bar (next effect)
+		if (!rec::active() && action < 0) {
+			int dir = 0;
+			if (down & KEY_RIGHT)
+				dir = 1;
+			else if (down & KEY_LEFT)
+				dir = -1;
+			else if (down & KEY_TOUCH) {
+				touchPosition tp;
+				touchRead(&tp);
+				if (tp.px >= 92 && tp.px < 92 + 156 && tp.py >= 158 && tp.py < 158 + 26)
+					dir = 1;
+			}
+			if (dir != 0) {
+				const fx::Effect next = fx::step(fx::current(), dir, videoMode);
+				if (!fx::set(next))
+					setMessage("Effect: no memory");
+				else
+					setMessage(fx::statusLabel(fx::current()) ? fx::statusLabel(fx::current()) : "Effect: NORMAL");
+			}
+		}
+
 		if (appPowerExitRequested()) {
 			if (rec::active())
 				stopRecording(rec::STOP_USER);
@@ -379,7 +418,7 @@ void cameraMode() {
 
 		if (messageFrames > 0 && --messageFrames == 0 && !rec::active()) {
 			lastStatus = "";
-			setIdleStatus(videoMode ? "Video" : "Ready");
+			setIdleStatus(idleLabel());
 		}
 
 		if (action == B_BACK) {
@@ -399,9 +438,14 @@ void cameraMode() {
 			}
 		} else if (action == B_MODE && !rec::active()) {
 			videoMode = !videoMode;
+			bool effectDropped = false;
+			if (videoMode && !fx::videoSupported(fx::current())) {
+				fx::set(fx::NORMAL); // this effect is photo-only
+				effectDropped = true;
+			}
 			uiTopSetMode(videoMode);
 			showCameraButtons(videoMode, false);
-			setMessage(videoMode ? "Video mode" : "Photo mode");
+			setMessage(effectDropped ? "Video: effect off" : (videoMode ? "Video mode" : "Photo mode"));
 		} else if (action == B_FLIP && !rec::active()) {
 			waitTransferIdle(30);
 			cameraTransferStop();
@@ -435,7 +479,7 @@ void cameraMode() {
 			uiTextClear();
 			showCameraButtons(videoMode, false);
 			lastStatus = "";
-			setIdleStatus(videoMode ? "Video" : "Ready");
+			setIdleStatus(idleLabel());
 			uiTopFade(false, 4);
 		}
 

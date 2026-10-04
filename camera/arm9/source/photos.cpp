@@ -1,4 +1,5 @@
 #include "photos.h"
+#include "filters.h"
 
 #include "camera.h"
 
@@ -115,6 +116,21 @@ PhotoResult photosSaveYuv(const u16 *yuv422, std::string &outName) {
 	// Bottom-up: the last camera row comes first
 	for (int y = IMG_H - 1; y >= 0 && ok; y--) {
 		const u8 *src = (const u8 *)(yuv422 + y * IMG_W);
+		if (fx::current() != fx::NORMAL) {
+			// effect: the visible filter is part of the saved photo (per pixel; MIRROR flips the left half over the right)
+			for (int x = 0; x < IMG_W; x++) {
+				const int sx = (fx::current() == fx::MIRROR && x >= IMG_W / 2) ? (IMG_W - 1 - x) : x;
+				const int pair = sx & ~1;
+				u8 r, g, b;
+				yuvToRgb(src[sx * 2], (int)src[pair * 2 + 1] - 0x80, (int)src[pair * 2 + 3] - 0x80, r, g, b);
+				fx::applyRgb8(r, g, b);
+				row[x * 3 + 0] = b;
+				row[x * 3 + 1] = g;
+				row[x * 3 + 2] = r;
+			}
+			ok = fwrite(row, 1, ROW_BYTES, f) == (size_t)ROW_BYTES;
+			continue;
+		}
 		for (int x = 0; x < IMG_W; x += 2) {
 			const int y1 = src[x * 2 + 0];
 			const int cb = src[x * 2 + 1] - 0x80;
@@ -208,6 +224,7 @@ void photosDrawYuvScaled(const u16 *yuv422, u16 *dst) {
 			dst[dy * 256 + dx] = rgb555(r, g, b);
 		}
 	}
+	fx::applyFrame(dst); // the same effect the saved photo gets
 }
 
 std::string photosDirectory(void) { return photoDir(); }
