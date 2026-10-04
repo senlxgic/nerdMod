@@ -19,6 +19,7 @@
 #include "color.h"
 #include "errorScreen.h"
 #include "fileBrowse.h"
+#include "dirIndex.h"
 #include "fileCopy.h"
 #include "common/lzss.h"
 #include "common/tonccpy.h"
@@ -966,19 +967,31 @@ void ThemeTextures::loadBoxArtToMem(const char *filename, int num) {
 		return;
 	}
 
-	extern off_t getFileSize(const char *fileName);
-	off_t filesize = getFileSize(filename);
+	if (!pathMayExist(filename)) {
+		boxArtFound[num] = false;
+		return;
+	}
 
-	if (filesize == 0 || filesize > 0xB000) {
+	// Open once: query the size, then read from the same handle.
+	FILE *file = fopen(filename, "rb");
+	off_t filesize = 0;
+	if (file) {
+		fseek(file, 0, SEEK_END);
+		filesize = ftell(file);
+		fseek(file, 0, SEEK_SET);
+	}
+
+	if (!file || filesize == 0 || filesize > 0xB000) {
 		boxArtFound[num] = false;
 		//filename = "nitro:/graphics/boxart_unknown.bmp";
 		//file = fopen(filename, "rb");
+		if (file)
+			fclose(file);
 		return;
 	}
 
 	boxArtFound[num] = true;
 
-	FILE *file = fopen(filename, "rb");
 	fread(boxArtCache+(num*0xB000), 1, 0xB000, file);
 	fclose(file);
 }

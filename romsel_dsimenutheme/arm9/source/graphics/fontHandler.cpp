@@ -1,4 +1,5 @@
 #include "fontHandler.h"
+#include "dirIndex.h"
 
 #include <nds/arm9/dldi.h>
 #include <list>
@@ -34,7 +35,7 @@ bool shouldClear[] = {false, false};
 	return false;
 }*/
 bool fileExists(const char* path) {
-	if (access(path, F_OK) == 0)
+	if (pathMayExist(path) && access(path, F_OK) == 0)
 		return true;
 
 	return false;

@@ -1,4 +1,5 @@
 #include "fileBrowse.h"
+#include "dirIndex.h"
 #include <algorithm>
 #include <dirent.h>
 #include <math.h>
@@ -625,7 +626,7 @@ void updateBoxArt(void) {
 	}
 
 	sprintf(boxArtPath, "%s:/_nds/TWiLightMenu/boxart/%s.png", sys().isRunFromSD() ? "sd" : "fat", boxArtFilename);
-	if (!isDirectory[CURPOS] && (bnrRomType[CURPOS] == 0) && (access(boxArtPath, F_OK) != 0)) {
+	if (!isDirectory[CURPOS] && (bnrRomType[CURPOS] == 0) && !(pathMayExist(boxArtPath) && access(boxArtPath, F_OK) == 0)) {
 		sprintf(boxArtPath, "%s:/_nds/TWiLightMenu/boxart/%s.png", sys().isRunFromSD() ? "sd" : "fat", gameTid[CURPOS]);
 	}
 	if (!tex().drawBoxArt(boxArtPath, (dsiFeatures() && ms().showBoxArt == 2))) { // Load box art
@@ -2819,7 +2820,7 @@ void getFileInfo(SwitchState scrn, const vector<vector<DirEntry>> &dirContents, 
 					snprintf(boxArtPath, sizeof(boxArtPath), "%s:/_nds/TWiLightMenu/boxart/%s.png",
 							 sys().isRunFromSD() ? "sd" : "fat",
 							 dirContents[scrn][i + PAGENUM * 40].name.c_str());
-					if ((bnrRomType[i] == 0) && (access(boxArtPath, F_OK) != 0)) {
+					if ((bnrRomType[i] == 0) && !(pathMayExist(boxArtPath) && access(boxArtPath, F_OK) == 0)) {
 						snprintf(boxArtPath, sizeof(boxArtPath), "%s:/_nds/TWiLightMenu/boxart/%s.png",
 								 (sys().isRunFromSD() ? "sd" : "fat"),
 								 gameTid[i]);

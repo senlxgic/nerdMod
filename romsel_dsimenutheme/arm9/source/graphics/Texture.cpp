@@ -1,4 +1,5 @@
 #include "Texture.h"
+#include "dirIndex.h"
 #include "paletteEffects.h"
 #include "common/tonccpy.h"
 #include "common/twlmenusettings.h"
@@ -17,7 +18,12 @@ Texture::Texture(const std::string &filePath, const std::string &fallback1, cons
 	int i = 0;
 	do {
 		for (const char *extension : extensions) {
-			file = fopen((*paths[i] + extension).c_str(), "rb");
+			const std::string candidate = *paths[i] + extension;
+			if (!pathMayExist(candidate.c_str())) {
+				file = NULL; // known not to exist on the SD card; same as a failed fopen()
+				continue;
+			}
+			file = fopen(candidate.c_str(), "rb");
 			if (file) {
 				_type = findType(file);
 				if (_type == TextureType::Unknown) {

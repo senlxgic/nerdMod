@@ -22,6 +22,7 @@
 ------------------------------------------------------------------*/
 
 #include "iconTitle.h"
+#include "dirIndex.h"
 #include "common/twlmenusettings.h"
 #include "common/bootstrapsettings.h"
 #include "common/systemdetails.h"
@@ -224,7 +225,7 @@ void getGameInfo(bool isDir, const char *name, int num, bool fromArgv) {
 
 		// First try banner bin
 		snprintf(customIconPath, sizeof(customIconPath), "%s:/_nds/TWiLightMenu/icons/%s.bin", sys().isRunFromSD() ? "sd" : "fat", name);
-		if (access(customIconPath, F_OK) == 0) {
+		if (pathMayExist(customIconPath) && access(customIconPath, F_OK) == 0) {
 			customIcon[num] = 2; // custom icon is a banner bin
 			FILE *file = fopen(customIconPath, "rb");
 			if (file) {
@@ -266,7 +267,7 @@ void getGameInfo(bool isDir, const char *name, int num, bool fromArgv) {
 		} else if (customIcon[num] == 0) {
 			// If no banner bin, try png
 			snprintf(customIconPath, sizeof(customIconPath), "%s:/_nds/TWiLightMenu/icons/%s.png", sys().isRunFromSD() ? "sd" : "fat", name);
-			customIcon[num] = (access(customIconPath, F_OK) == 0);
+			customIcon[num] = (pathMayExist(customIconPath) && access(customIconPath, F_OK) == 0);
 			if (customIcon[num]) {
 				std::vector<unsigned char> image;
 				uint imageWidth, imageHeight;
