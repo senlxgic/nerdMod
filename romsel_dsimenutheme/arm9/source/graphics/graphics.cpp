@@ -22,6 +22,10 @@
 #include <ctime>
 #include <cmath>
 #include <dirent.h>
+#include <cstdarg>
+#include <cstring>
+#include <strings.h>
+#include <sys/stat.h>
 #include <maxmod9.h>
 #include <nds/arm9/dldi.h>
 
@@ -1282,42 +1286,238 @@ static bool currentPhotoIsBootstrap = false;
 static std::string currentPhotoPath;
 static int currentBootstrapPhoto = 0;
 
-void loadPhoto(const std::string &path, const bool bufferOnly);
+bool loadPhoto(const std::string &path, const bool bufferOnly);
 void loadBootstrapScreenshot(FILE *file, const bool bufferOnly);
+
+// ---- nerdMod: top-screen photo -------------------------------------------------------------------------
+// Sources, in this order (one pipeline, one fallback chain):
+//   1. <dev>:/_nds/TWiLightMenu/dsimenu/photos/*.png|*.bmp  (any case; one is picked at random)
+//   2. nds-bootstrap screenshots (screenshots.tar)
+//   3. the built-in default picture
+// Images bigger than the frame (208x156) are scaled down to fit instead of being replaced by the default, a file
+// that cannot be decoded is skipped (the next candidate is tried), and what happened is written to
+// <dev>:/_nds/nerdMod/photo-status.txt so a picture that does not show can be explained from a PC.
+static std::string photoDiag;
+
+static void photoDiagAdd(const char *fmt, ...) {
+	char line[200];
+	va_list ap;
+	va_start(ap, fmt);
+	vsnprintf(line, sizeof(line), fmt, ap);
+	va_end(ap);
+	if (photoDiag.size() < 3000)
+		photoDiag += line;
+}
+
+static void photoDiagWrite() {
+	const char *dev = sys().isRunFromSD() ? "sd:" : "fat:";
+	std::string dir = std::string(dev) + "/_nds";
+	mkdir(dir.c_str(), 0777);
+	dir += "/nerdMod";
+	mkdir(dir.c_str(), 0777);
+	FILE *f = fopen((dir + "/photo-status.txt").c_str(), "wb");
+	if (f) {
+		fwrite(photoDiag.data(), 1, photoDiag.size(), f);
+		fclose(f);
+	}
+}
+
+static bool hasPhotoExtension(const std::string &name, bool &isBmp) {
+	const size_t dot = name.find_last_of('.');
+	if (dot == std::string::npos || dot + 1 >= name.size())
+		return false;
+	const char *e = name.c_str() + dot + 1;
+	isBmp = strcasecmp(e, "bmp") == 0;
+	return isBmp || strcasecmp(e, "png") == 0;
+}
+
+// Scales RGBA down (box average) so it fits the 208x156 frame; smaller pictures are left alone (centred later)
+static void fitPhoto(std::vector<unsigned char> &img, uint &w, uint &h) {
+	if (w <= 208 && h <= 156)
+		return;
+	uint dw = 208, dh = (uint)(((u64)h * 208) / w);
+	if (dh > 156) {
+		dh = 156;
+		dw = (uint)(((u64)w * 156) / h);
+	}
+	if (dw == 0) dw = 1;
+	if (dh == 0) dh = 1;
+	std::vector<unsigned char> out((size_t)dw * dh * 4);
+	for (uint y = 0; y < dh; y++) {
+		const uint y0 = (uint)(((u64)y * h) / dh);
+		uint y1 = (uint)(((u64)(y + 1) * h) / dh);
+		if (y1 <= y0) y1 = y0 + 1;
+		for (uint x = 0; x < dw; x++) {
+			const uint x0 = (uint)(((u64)x * w) / dw);
+			uint x1 = (uint)(((u64)(x + 1) * w) / dw);
+			if (x1 <= x0) x1 = x0 + 1;
+			u32 sum[4] = {0, 0, 0, 0};
+			for (uint sy = y0; sy < y1 && sy < h; sy++) {
+				const unsigned char *px = &img[((size_t)sy * w + x0) * 4];
+				for (uint sx = x0; sx < x1 && sx < w; sx++, px += 4) {
+					sum[0] += px[0]; sum[1] += px[1]; sum[2] += px[2]; sum[3] += px[3];
+				}
+			}
+			const u32 n = (y1 - y0) * (x1 - x0);
+			unsigned char *o = &out[((size_t)y * dw + x) * 4];
+			for (int c = 0; c < 4; c++)
+				o[c] = (unsigned char)(sum[c] / n);
+		}
+	}
+	img.swap(out);
+	w = dw;
+	h = dh;
+}
+
+// Decodes a PNG or an uncompressed 24/32-bit BMP to RGBA, fitted into the frame. On failure `why` says what was wrong.
+static bool decodePhotoFile(const std::string &path, std::vector<unsigned char> &image, uint &w, uint &h, std::string &why) {
+	bool isBmp = false;
+	if (path.compare(0, 6, "nitro:") != 0 && !hasPhotoExtension(path, isBmp)) {
+		why = "not a .png/.bmp";
+		return false;
+	}
+	if (path.compare(0, 6, "nitro:") == 0)
+		isBmp = false;
+	image.clear();
+	w = h = 0;
+	FILE *f = fopen(path.c_str(), "rb");
+	if (!f) {
+		why = "cannot open";
+		return false;
+	}
+	u8 head[32] = {0};
+	const size_t got = fread(head, 1, sizeof(head), f);
+	if (!isBmp) {
+		fclose(f);
+		if (got < 24 || memcmp(head, "\x89PNG\r\n\x1a\n", 8) != 0) {
+			why = "not a PNG file";
+			return false;
+		}
+		const u32 pw = ((u32)head[16] << 24) | (head[17] << 16) | (head[18] << 8) | head[19];
+		const u32 ph = ((u32)head[20] << 24) | (head[21] << 16) | (head[22] << 8) | head[23];
+		// the decoded RGBA picture needs w*h*4 bytes of heap: refuse what cannot fit instead of crashing
+		if (pw == 0 || ph == 0 || pw > 4096 || ph > 4096 || (u64)pw * ph * 4 > (u64)3 * 1024 * 1024) {
+			why = "too large to decode (" + std::to_string(pw) + "x" + std::to_string(ph) + ")";
+			return false;
+		}
+		const unsigned err = lodepng::decode(image, w, h, path);
+		if (err != 0 || image.size() < (size_t)w * h * 4 || w == 0 || h == 0) {
+			why = std::string("PNG decode error: ") + lodepng_error_text(err);
+			image.clear();
+			w = h = 0;
+			return false;
+		}
+		fitPhoto(image, w, h);
+		return true;
+	}
+
+	// BMP
+	if (got < 30 || head[0] != 'B' || head[1] != 'M') {
+		fclose(f);
+		why = "not a BMP file";
+		return false;
+	}
+	u8 hdr[40] = {0};
+	fseek(f, 14, SEEK_SET);
+	if (fread(hdr, 1, 40, f) != 40) {
+		fclose(f);
+		why = "BMP header too short";
+		return false;
+	}
+	const u32 dataOffset = head[10] | (head[11] << 8) | (head[12] << 16) | ((u32)head[13] << 24);
+	const s32 bw = (s32)(hdr[4] | (hdr[5] << 8) | (hdr[6] << 16) | ((u32)hdr[7] << 24));
+	s32 bh = (s32)(hdr[8] | (hdr[9] << 8) | (hdr[10] << 16) | ((u32)hdr[11] << 24));
+	const u32 bpp = hdr[14] | (hdr[15] << 8);
+	const u32 comp = hdr[16] | (hdr[17] << 8) | (hdr[18] << 16) | ((u32)hdr[19] << 24);
+	const bool topDown = bh < 0;
+	if (topDown)
+		bh = -bh;
+	if (bw <= 0 || bh <= 0 || bw > 4096 || bh > 4096 || (bpp != 24 && bpp != 32) || (comp != 0 && comp != 3)) {
+		fclose(f);
+		why = "BMP must be uncompressed 24 or 32-bit";
+		return false;
+	}
+	const uint sw = (uint)bw, sh = (uint)bh;
+	uint dw = sw, dh = sh;
+	if (dw > 208 || dh > 156) {
+		dw = 208;
+		dh = (uint)(((u64)sh * 208) / sw);
+		if (dh > 156) {
+			dh = 156;
+			dw = (uint)(((u64)sw * 156) / sh);
+		}
+		if (dw == 0) dw = 1;
+		if (dh == 0) dh = 1;
+	}
+	const u32 bytes = bpp / 8, stride = (sw * bytes + 3) & ~3u;
+	std::vector<unsigned char> row(stride);
+	image.assign((size_t)dw * dh * 4, 255);
+	for (uint y = 0; y < dh; y++) {
+		const uint sy = (uint)(((u64)y * sh) / dh);
+		const uint fileRow = topDown ? sy : sh - 1 - sy;
+		if (fseek(f, dataOffset + (long)fileRow * stride, SEEK_SET) != 0 || fread(row.data(), 1, stride, f) != stride) {
+			fclose(f);
+			why = "BMP data is cut short";
+			image.clear();
+			return false;
+		}
+		for (uint x = 0; x < dw; x++) {
+			const unsigned char *px = &row[(((u64)x * sw) / dw) * bytes];
+			unsigned char *o = &image[((size_t)y * dw + x) * 4];
+			o[0] = px[2]; o[1] = px[1]; o[2] = px[0]; o[3] = 255;
+		}
+	}
+	fclose(f);
+	w = dw;
+	h = dh;
+	return true;
+}
 
 bool loadPhotoList() {
 	if (!tex().photoBuffer()) {
 		return false;
 	}
 
-	DIR *dir;
-	struct dirent *ent;
-	std::string photoDir;
-	std::string dirPath = sys().isRunFromSD() ? "sd:/_nds/TWiLightMenu/dsimenu/photos/" : "fat:/_nds/TWiLightMenu/dsimenu/photos/";
+	photoDiag.clear();
+	photoDiagAdd("nerdMod top-screen photo status\nShowPhoto=%d RenderPhoto=%d\n", (int)ms().showPhoto, (int)tc().renderPhoto());
+
 	std::vector<std::string> photoList;
-
-	if ((dir = opendir(dirPath.c_str())) == NULL) {
-		dirPath = sys().isRunFromSD() ? "fat:/_nds/TWiLightMenu/dsimenu/photos/" : "sd:/_nds/TWiLightMenu/dsimenu/photos/";
-		dir = opendir(dirPath.c_str());
-	}
-
-	if (dir) {
-		/* print all the files and directories within directory */
-		while ((ent = readdir(dir)) != NULL) {
-			photoDir = ent->d_name;
-			if (photoDir == ".." || photoDir == "..." || photoDir == "." || photoDir.substr(0, 2) == "._" ||
-				photoDir.substr(photoDir.find_last_of(".") + 1) != "png")
+	const char *dirs[2] = {sys().isRunFromSD() ? "sd:/_nds/TWiLightMenu/dsimenu/photos/" : "fat:/_nds/TWiLightMenu/dsimenu/photos/",
+						   sys().isRunFromSD() ? "fat:/_nds/TWiLightMenu/dsimenu/photos/" : "sd:/_nds/TWiLightMenu/dsimenu/photos/"};
+	for (int d = 0; d < 2; d++) {
+		DIR *dir = opendir(dirs[d]);
+		if (!dir) {
+			photoDiagAdd("folder %s: missing\n", dirs[d]);
+			continue;
+		}
+		int seen = 0;
+		while (struct dirent *ent = readdir(dir)) {
+			const std::string name = ent->d_name;
+			bool isBmp;
+			if (name == "." || name == ".." || name.compare(0, 2, "._") == 0 || !hasPhotoExtension(name, isBmp))
 				continue;
-
-			// Reallocation here, but prevents our vector from being filled with garbage
-			photoList.emplace_back(dirPath + photoDir);
+			if (++seen > 200)
+				break; // bounded
+			photoList.emplace_back(std::string(dirs[d]) + name);
 		}
 		closedir(dir);
-		if (photoList.size() > 0) {
-			currentPhotoPath = photoList[rand() / ((RAND_MAX + 1u) / photoList.size())];
-			loadPhoto(currentPhotoPath, false);
-			currentPhotoIsBootstrap = false;
-			return true;
+		photoDiagAdd("folder %s: %d candidate picture(s)\n", dirs[d], seen);
+	}
+
+	if (!photoList.empty()) {
+		// Random start, then walk on to the next candidate if one cannot be used (bounded)
+		const size_t startIdx = rand() / ((RAND_MAX + 1u) / photoList.size());
+		const size_t tries = photoList.size() < 4 ? photoList.size() : 4;
+		for (size_t t = 0; t < tries; t++) {
+			const std::string &candidate = photoList[(startIdx + t) % photoList.size()];
+			if (loadPhoto(candidate, false)) {
+				currentPhotoPath = candidate;
+				currentPhotoIsBootstrap = false;
+				photoDiagAdd("shown: %s (%ux%u)\n", candidate.c_str(), photoWidth, photoHeight);
+				photoDiagWrite();
+				return true;
+			}
+			photoDiagAdd("skipped: %s\n", candidate.c_str());
 		}
 	}
 
@@ -1339,17 +1539,26 @@ bool loadPhotoList() {
 			currentBootstrapPhoto = screenshots[rand() % screenshots.size()];
 			fseek(file, 0x200 + 0x18400 * currentBootstrapPhoto, SEEK_SET);
 			loadBootstrapScreenshot(file, false);
+			fclose(file);
 			currentPhotoIsBootstrap = true;
+			photoDiagAdd("shown: nds-bootstrap screenshot #%d\n", currentBootstrapPhoto);
+			photoDiagWrite();
 			return true;
 		}
+		fclose(file);
 	}
 
 	// If no photos or screenshots found, then draw the default
 	char path[64];
 	snprintf(path, sizeof(path), "nitro:/languages/%s/photo_default.png", ms().getGuiLanguageString().c_str());
 	currentPhotoPath = path;
-	loadPhoto(path, false);
+	if (!loadPhoto(path, false)) {
+		currentPhotoPath = "nitro:/graphics/photo_default.png";
+		loadPhoto(currentPhotoPath, false);
+	}
 	currentPhotoIsBootstrap = false;
+	photoDiagAdd("shown: built-in default\n");
+	photoDiagWrite();
 	return true;
 }
 
@@ -1382,16 +1591,23 @@ void reloadPhoto() {
 	}
 }
 
-void loadPhoto(const std::string &path, const bool bufferOnly) {
+bool loadPhoto(const std::string &path, const bool bufferOnly) {
 	std::vector<unsigned char> image;
 	bool alternatePixel = false;
 
-	lodepng::decode(image, photoWidth, photoHeight, path);
-
-	if (photoWidth > 208 || photoHeight > 156) {
-		image.clear();
-		// Image is too big, load the default
-		lodepng::decode(image, photoWidth, photoHeight, "nitro:/graphics/photo_default.png");
+	std::string why;
+	if (!decodePhotoFile(path, image, photoWidth, photoHeight, why)) {
+		photoDiagAdd("cannot use %s: %s\n", path.c_str(), why.c_str());
+		logPrint("photo: cannot use %s: %s\n", path.c_str(), why.c_str());
+		if (path.compare(0, 6, "nitro:") != 0) {
+			return false; // the caller moves on to the next candidate / the default
+		}
+		// the built-in default itself failed: draw a plain frame rather than stale data
+		photoWidth = 208;
+		photoHeight = 156;
+		image.assign((size_t)208 * 156 * 4, 0);
+		for (size_t i = 3; i < image.size(); i += 4)
+			image[i] = 255;
 	}
 
 	for (uint i=0;i<image.size()/4;i++) {
@@ -1468,7 +1684,7 @@ void loadPhoto(const std::string &path, const bool bufferOnly) {
 	}
 
 	if (bufferOnly) {
-		return;
+		return true;
 	}
 
 	u16 *bgSubBuffer = tex().beginBgSubModify();
@@ -1500,6 +1716,7 @@ void loadPhoto(const std::string &path, const bool bufferOnly) {
 		x++;
 	}
 	tex().commitBgSubModify();
+	return true;
 }
 
 void loadBootstrapScreenshot(FILE *file, const bool bufferOnly) {
