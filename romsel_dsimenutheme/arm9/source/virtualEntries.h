@@ -38,6 +38,10 @@ bool builtInAppsShownIn(const std::string &cwd);
 // Returns the number of tiles inserted.
 int addBuiltInEntries(std::vector<DirEntry> &entries, int insertAt);
 
+// True only for the absolute launch/icon path of a registered built-in app. Any other .srldr file
+// (system files, whatever a user drops in a folder) is NOT a game and must never get ROM/banner handling.
+bool isBuiltInAppPath(const char *path);
+
 // Last path component ("Action/Game.nds" -> "Game.nds"; names without '/' are returned as-is).
 const char *entryBaseName(const std::string &name);
 // Everything up to and including the last '/' ("Action/Game.nds" -> "Action/"); empty if none.

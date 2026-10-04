@@ -41,6 +41,7 @@
 #include "language.h"
 #include "ndsheaderbanner.h"
 #include "myDSiMode.h"
+#include "virtualEntries.h"
 #include <ctype.h>
 #include <nds.h>
 #include <nds/arm9/dldi.h>
@@ -435,7 +436,7 @@ void getGameInfo(bool isDir, const char *name, int num, bool fromArgv) {
 		fread(gameTid[num], 1, 4, fp);
 
 		fclose(fp);
-	} else if (extension(name, {".nds", ".dsi", ".ids", ".srl", ".app", ".srldr"})) {
+	} else if (extension(name, {".nds", ".dsi", ".ids", ".srl", ".app"}) || isBuiltInAppPath(name)) {
 		// this is an nds/app file!
 		FILE *fp;
 

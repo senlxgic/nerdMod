@@ -2859,7 +2859,7 @@ void getFileInfo(SwitchState scrn, const vector<vector<DirEntry>> &dirContents, 
 			if (isDirectory[i]) {
 				bnrWirelessIcon[i] = 0;
 			} else {
-				if (extension(std_romsel_filename, {".nds", ".dsi", ".ids", ".srl", ".app", ".argv", ".srldr"})) {
+				if (extension(std_romsel_filename, {".nds", ".dsi", ".ids", ".srl", ".app", ".argv"}) || isBuiltInAppPath(std_romsel_filename.c_str())) {
 					bnrRomType[i] = 0;
 				} else if (extension(std_romsel_filename, {".xex", ".atr", ".a26", ".a52", ".a78"})) {
 					bnrRomType[i] = 10;

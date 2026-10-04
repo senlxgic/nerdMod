@@ -70,6 +70,16 @@ int addBuiltInEntries(std::vector<DirEntry> &entries, int insertAt) {
 	return added;
 }
 
+bool isBuiltInAppPath(const char *path) {
+	if (!path || !*path)
+		return false;
+	for (int id = 0; id < builtInAppCount(); id++) {
+		if (builtInAppIconPath(id) == path || builtInAppPath(id) == path)
+			return true;
+	}
+	return false;
+}
+
 const char *entryBaseName(const std::string &name) {
 	const size_t slash = name.rfind('/');
 	return slash == std::string::npos ? name.c_str() : name.c_str() + slash + 1;

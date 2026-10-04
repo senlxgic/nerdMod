@@ -30,6 +30,8 @@
 #include "graphics/color.h"
 
 #include <nds.h>
+#include <new>
+#include <string.h>
 
 extern bool fadeType;
 extern bool fadeSpeed;
@@ -137,6 +139,92 @@ void setupRgb565BmpDisplay() {
 	irqEnable(IRQ_HBLANK);
 }
 
+// nerdMod: shows a BMP larger than the screen, scaled down (nearest neighbour, aspect ratio kept).
+// Handles uncompressed 24 and 32-bit BMPs with the row padding the format requires. Returns false
+// (and leaves a blank, valid display) for anything else. Uses the same two-buffer dithering as the
+// regular path: the two buffers differ by a small colour step on alternate pixels.
+static bool bmpLoadScaled(FILE *file, u32 width, u32 height) {
+	u8 hdr[4] = {0};
+	fseek(file, 0x1C, SEEK_SET);
+	if (fread(hdr, 1, 2, file) != 2)
+		return false;
+	const u32 bitsPerPixel = hdr[0] | (hdr[1] << 8);
+	if (fread(hdr, 1, 4, file) != 4)
+		return false;
+	const u32 compression = hdr[0] | (hdr[1] << 8) | (hdr[2] << 16) | ((u32)hdr[3] << 24);
+	if ((bitsPerPixel != 24 && bitsPerPixel != 32) || (compression != 0 && compression != 3))
+		return false;
+
+	fseek(file, 0x0A, SEEK_SET);
+	if (fread(hdr, 1, 4, file) != 4)
+		return false;
+	const u32 dataOffset = hdr[0] | (hdr[1] << 8) | (hdr[2] << 16) | ((u32)hdr[3] << 24);
+	const u32 bytes = bitsPerPixel / 8;
+	const u32 stride = (width * bytes + 3) & ~3u;
+
+	// Destination size: fit into 256x192 keeping the aspect ratio
+	u32 dw = 256, dh = (height * 256) / width;
+	if (dh > 192) {
+		dh = 192;
+		dw = (width * 192) / height;
+	}
+	if (dw == 0) dw = 1;
+	if (dh == 0) dh = 1;
+	const u32 xPos = (256 - dw) / 2, yPos = (192 - dh) / 2;
+
+	u16 *b0 = new (std::nothrow) u16[256 * 192];
+	u16 *b1 = new (std::nothrow) u16[256 * 192];
+	u8 *row = new (std::nothrow) u8[stride];
+	if (!b0 || !b1 || !row) {
+		delete[] b0;
+		delete[] b1;
+		delete[] row;
+		return false;
+	}
+	const u16 bg = colorTable ? colorTable[0] : 0;
+	toncset16(b0, bg, 256 * 192);
+	toncset16(b1, bg, 256 * 192);
+
+	bool ok = true;
+	for (u32 dy = 0; dy < dh && ok; dy++) {
+		const u32 sy = (dy * height) / dh;            // top-down source row
+		const u32 fileRow = height - 1 - sy;          // BMP rows are stored bottom-up
+		if (fseek(file, dataOffset + (long)fileRow * stride, SEEK_SET) != 0 || fread(row, 1, stride, file) != stride) {
+			ok = false;
+			break;
+		}
+		for (u32 dx = 0; dx < dw; dx++) {
+			const u8 *px = row + ((dx * width) / dw) * bytes;
+			u8 c[3] = {px[0], px[1], px[2]};
+			u8 a[3] = {c[0], c[1], c[2]};
+			if (a[0] >= 0x4 && a[0] < 0xFC) a[0] += 0x4;
+			if (a[1] >= 0x2 && a[1] < 0xFE) a[1] += 0x2;
+			if (a[2] >= 0x4 && a[2] < 0xFC) a[2] += 0x4;
+			u16 base = rgb8ToRgb565(c[0], c[1], c[2]);
+			u16 adj = rgb8ToRgb565(a[0], a[1], a[2]);
+			if (colorTable) {
+				base = colorTable[base % 0x8000];
+				adj = colorTable[adj % 0x8000];
+			}
+			const u32 o = (yPos + dy) * 256 + xPos + dx;
+			if ((dx + dy) & 1) {
+				b0[o] = adj;
+				b1[o] = base;
+			} else {
+				b0[o] = base;
+				b1[o] = adj;
+			}
+		}
+	}
+	delete[] row;
+
+	dsImageBuffer[0] = b0;
+	dsImageBuffer[1] = b1;
+	setupRgb565BmpDisplay(); // frees dsImageBuffer8 (the caller must not use it afterwards)
+	doubleBuffer = true;
+	return true; // a partly read file still shows what was read; the display state is complete
+}
+
 void imageLoad(const char* filename) {
 	// Color LUT display test
 	/* toncset16(BG_GFX, 0, 256*192);
@@ -156,8 +244,24 @@ void imageLoad(const char* filename) {
 		setupRgb565BmpDisplay();
 
 		std::vector<unsigned char> image;
-		unsigned width, height;
-		lodepng::decode(image, width, height, filename);
+		unsigned width = 0, height = 0;
+		{
+			// nerdMod: read the size from the PNG header first. Decoding a huge PNG needs width*height*4
+			// bytes and the heap is a few MB, so a failed allocation used to end in a data abort.
+			FILE *pf = fopen(filename, "rb");
+			u8 ihdr[24] = {0};
+			const bool got = pf && fread(ihdr, 1, 24, pf) == 24;
+			if (pf)
+				fclose(pf);
+			if (!got || memcmp(ihdr, "\x89PNG\r\n\x1a\n", 8) != 0)
+				return;
+			const u32 pw = ((u32)ihdr[16] << 24) | (ihdr[17] << 16) | (ihdr[18] << 8) | ihdr[19];
+			const u32 ph = ((u32)ihdr[20] << 24) | (ihdr[21] << 16) | (ihdr[22] << 8) | ihdr[23];
+			if (pw == 0 || ph == 0 || pw > 4096 || ph > 4096 || (u64)pw * ph * 4 > (u64)3 * 1024 * 1024)
+				return;
+		}
+		if (lodepng::decode(image, width, height, filename) != 0)
+			return;
 		if (width > 256 || height > 192) return;
 
 		int xPos = 0;
@@ -276,8 +380,22 @@ void imageLoad(const char* filename) {
 		fread(&width, 1, sizeof(width), file);
 		fread(&height, 1, sizeof(height), file);
 
-		if (width > 256 || height > 192) {
+		if (width == 0 || height == 0 || width > 8192 || height > 8192) {
+			// Not a BMP we can show: leave a valid (blank) display instead of half-initialised state
 			fclose(file);
+			delete[] dsImageBuffer8;
+			dsImageBuffer8 = nullptr;
+			return;
+		}
+
+		if (width > 256 || height > 192) {
+			// nerdMod: larger images (e.g. the 640x480 Camera photos) are scaled down to fit the screen
+			// instead of being rejected. Only plain 24/32-bit BMPs are handled here.
+			const bool shown = bmpLoadScaled(file, width, height);
+			fclose(file);
+			if (!shown) // on success setupRgb565BmpDisplay() already freed it
+				delete[] dsImageBuffer8;
+			dsImageBuffer8 = nullptr;
 			return;
 		}
 
