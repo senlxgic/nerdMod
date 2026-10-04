@@ -27,6 +27,9 @@
 
 #include "app.h"
 #include "camera.h"
+#include "camsettings.h"
+#include "fpsutil.h"
+#include "audioRecorder.h"
 #include "gallery.h"
 #include "filters.h"
 #include "photos.h"
@@ -210,6 +213,86 @@ const char *takePhoto(int &frontPage) {
 	return result;
 }
 
+//---------------------------------------------------------------- recording info / diagnostics
+
+rec::Result lastRecording;
+bool haveLastRecording = false;
+
+const char *fpsWord(int fps) {
+	switch (fps) {
+		case 15: return "Smooth";
+		case 20: return "High";
+		case 30: return "Max";
+		default: return "Safe";
+	}
+}
+
+// Full-screen dialog with two pages (A switches): 0 = last recording, 1 = camera diagnostics. B / OK closes.
+void showInfoDialog(int page) {
+	uiClearButtons();
+	const UiButton ok[] = {{B_OK, UI_RECT_BACK, UI_BTN_BACK, UI_BTN_BACK_P, true}};
+	bool redraw = true;
+	while (!exitRequested) {
+		if (redraw) {
+			redraw = false;
+			uiTextClear();
+			uiBottomDrawBackground();
+			uiDrawDialogPanel();
+			uiShowButtons(ok, 1);
+			char line[40];
+			if (page == 0) {
+				uiTextCentred(6, "Last video");
+				if (!haveLastRecording) {
+					uiTextCentred(9, "No video yet");
+				} else {
+					const rec::Result &r = lastRecording;
+					snprintf(line, sizeof(line), "Requested: %d FPS", r.requestedFps);
+					uiTextAt(5, 8, line);
+					snprintf(line, sizeof(line), "Actual: %lu.%02lu FPS", (unsigned long)(r.avgFpsX100 / 100), (unsigned long)(r.avgFpsX100 % 100));
+					uiTextAt(5, 9, line);
+					snprintf(line, sizeof(line), "Dropped: %lu of %lu", (unsigned long)r.droppedFrames, (unsigned long)(r.frames + r.droppedFrames));
+					uiTextAt(5, 10, line);
+					snprintf(line, sizeof(line), "Max SD write: %lu ms", (unsigned long)r.maxWriteMs);
+					uiTextAt(5, 11, line);
+					uiTextAt(5, 12, r.hasAudio ? "Audio: OK" : "Audio: none");
+				}
+			} else {
+				uiTextCentred(6, "Camera diagnostics");
+				const rec::Stats st = rec::stats();
+				const rec::Result &r = lastRecording;
+				snprintf(line, sizeof(line), "Target: %d FPS", rec::fps());
+				uiTextAt(5, 8, line);
+				if (haveLastRecording) {
+					const u32 capX = fpsutil::averageFpsX100(r.capturedFrames, r.durationMs);
+					snprintf(line, sizeof(line), "Camera: %lu.%02lu FPS", (unsigned long)(capX / 100), (unsigned long)(capX % 100));
+					uiTextAt(5, 9, line);
+					snprintf(line, sizeof(line), "Dropped: %lu", (unsigned long)r.droppedFrames);
+					uiTextAt(5, 10, line);
+					snprintf(line, sizeof(line), "SD avg/max: %lu/%lu ms", (unsigned long)r.avgWriteMs, (unsigned long)r.maxWriteMs);
+					uiTextAt(5, 11, line);
+					snprintf(line, sizeof(line), "Buffers: %lu of %d", (unsigned long)r.bufferPeak, rec::slotCount());
+					uiTextAt(5, 12, line);
+					uiTextAt(5, 13, r.hasAudio ? "Mic: Active" : "Mic: No data");
+				} else {
+					uiTextAt(5, 10, "Record a video first");
+				}
+			}
+			uiTextAt(5, 14, page == 0 ? "A: diagnostics" : "A: last video");
+		}
+		scanKeys();
+		const u32 down = keysDown(), up = keysUp();
+		const int touched = uiHandleInput(down, up);
+		uiTick();
+		if ((down & KEY_B) || touched == B_OK || appPowerExitRequested())
+			break;
+		if (down & KEY_A) {
+			page ^= 1;
+			redraw = true;
+		}
+		swiWaitForVBlank();
+	}
+}
+
 const char *messageForStop(const rec::Result &r) {
 	if (!r.saved)
 		return r.frames == 0 ? "Nothing recorded" : "Video not saved";
@@ -230,6 +313,7 @@ void cameraMode() {
 
 	bool videoMode = false;
 	fx::set(fx::NORMAL);
+	rec::setFps(camsettings::videoFps());
 	uiTopSetCamera(cam == CAM_INNER);
 	uiTopSetMode(false);
 	showCameraButtons(false, false);
@@ -243,6 +327,7 @@ void cameraMode() {
 	bool glow = false;
 	int messageFrames = 0;
 	const char *lastStatus = "";
+	char lastRecLine[24] = "";
 
 	auto setMessage = [&](const char *m) {
 		uiStatus(m);
@@ -252,13 +337,25 @@ void cameraMode() {
 	// The idle status line: the active effect, else the mode
 	auto idleLabel = [&]() -> const char * {
 		const char *fxLabel = fx::statusLabel(fx::current());
-		return fxLabel ? fxLabel : (videoMode ? "Video" : "Ready");
+		static char videoLabel[24];
+		if (!fxLabel && videoMode) {
+			snprintf(videoLabel, sizeof(videoLabel), "Video %d FPS", rec::fps());
+			return videoLabel;
+		}
+		return fxLabel ? fxLabel : "Ready";
 	};
 	auto setIdleStatus = [&](const char *m) {
 		if (m != lastStatus) {
 			uiStatus(m);
 			lastStatus = m;
 		}
+	};
+
+	auto restoreCameraScreen = [&]() {
+		uiTextClear();
+		showCameraButtons(videoMode, false);
+		lastStatus = "";
+		setIdleStatus(idleLabel());
 	};
 
 	auto stopRecording = [&](rec::StopReason why) {
@@ -270,6 +367,14 @@ void cameraMode() {
 		uiTopSetRecording(false, 0);
 		showCameraButtons(videoMode, false);
 		setMessage(messageForStop(r));
+		lastRecLine[0] = 0;
+		if (r.frames > 0) {
+			lastRecording = r;
+			haveLastRecording = true;
+			showInfoDialog(0);
+			restoreCameraScreen();
+			setMessage(messageForStop(r));
+		}
 	};
 
 	auto startRecording = [&]() {
@@ -286,6 +391,7 @@ void cameraMode() {
 		showCameraButtons(videoMode, true);
 		uiTopSetRecording(true, 0);
 		lastStatus = "";
+		lastRecLine[0] = 0;
 		setIdleStatus("Recording");
 	};
 
@@ -376,6 +482,24 @@ void cameraMode() {
 				action = B_MODE;
 			if (action >= 0)
 				uiPressFeedback(action);
+		}
+
+		// ---- START: video frame rate (video mode) / diagnostics (photo mode)
+		if (!rec::active() && action < 0 && (down & KEY_START)) {
+			if (videoMode) {
+				const int next = fpsutil::next(rec::fps());
+				rec::setFps(next);
+				camsettings::setVideoFps(next);
+				static char fpsMsg[24];
+				snprintf(fpsMsg, sizeof(fpsMsg), "%d %s %dMB/min", next, fpsWord(next), fpsutil::mbPerMinute(next));
+				setMessage(fpsMsg);
+			} else {
+				waitTransferIdle(30);
+				cameraTransferStop();
+				inFlight = false;
+				showInfoDialog(1);
+				restoreCameraScreen();
+			}
 		}
 
 		// ---- effects: D-pad LEFT/RIGHT, or a tap on the status bar (next effect)

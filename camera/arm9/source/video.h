@@ -20,7 +20,6 @@
 
 namespace rec {
 
-constexpr u32 FRAME_INTERVAL_MS = 100;			// 10 frames per second
 constexpr u32 MAX_DURATION_MS = 30u * 60u * 1000u;
 constexpr u32 MAX_FILE_BYTES = 1500u * 1024u * 1024u;
 
@@ -40,8 +39,35 @@ struct Result {
 	u32 droppedFrames = 0;
 	u32 durationMs = 0;
 	bool hasAudio = false;	// the microphone delivered data
+	int requestedFps = 10;
+	u32 avgFpsX100 = 0;		// frames actually stored / duration, in hundredths
+	u32 capturedFrames = 0; // frames the camera delivered
+	u32 maxWriteMs = 0;
+	u32 avgWriteMs = 0;
+	u32 bufferPeak = 0;		// most frame buffers waiting for the card at once
 	StopReason reason = STOP_USER;
 };
+
+// Live numbers for the recording screen and the diagnostics page.
+struct Stats {
+	int fps = 10;			// requested
+	u32 elapsedMs = 0;
+	u32 captured = 0;		// camera frames seen
+	u32 stored = 0;			// frames written to the card
+	u32 dropped = 0;		// frames that were due but not stored (so far)
+	u32 queued = 0;
+	u32 bufferPeak = 0;
+	u32 sdAvgMs = 0, sdMaxMs = 0;
+	u32 capturedFpsX100 = 0;
+	bool micActive = false;
+	bool micData = false;
+};
+Stats stats();
+
+// Frame rate of the next recording (10, 15, 20 or 30). Cannot change while recording.
+void setFps(int fps);
+int fps();
+int slotCount();
 
 std::string videoFolder();
 bool ensureVideoFolder();

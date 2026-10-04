@@ -127,6 +127,10 @@ bool Writer::finish(const Final &final) {
 	header.audioBytes = audioBytesWritten;
 	header.indexOffset = indexOk ? indexOffset : 0;
 	header.indexCount = indexOk ? (u32)index.size() : 0;
+	header.maxWriteMs = final.maxWriteMs;
+	header.capturedFrames = final.capturedFrames;
+	if (final.audioFailed)
+		header.flags |= FLAG_AUDIO_FAILED;
 	if (final.framesDropped || final.droppedFrames)
 		header.flags |= FLAG_FRAMES_DROPPED;
 	if (indexOk)

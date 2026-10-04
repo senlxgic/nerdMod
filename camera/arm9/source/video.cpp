@@ -9,6 +9,7 @@
 #include <unistd.h>
 
 #include "audioRecorder.h"
+#include "fpsutil.h"
 #include "common/systemdetails.h"
 #include "msclock.h"
 #include "videoContainer.h"
@@ -21,7 +22,7 @@ namespace {
 // A slot is 16 bytes of padding, the 16-byte chunk header and the frame. Header + frame are written in one go.
 constexpr u32 SLOT_PAD = 16;
 constexpr u32 SLOT_BYTES = 32 + nvid::FRAME_BYTES; // 98336, a multiple of 32
-constexpr int SLOT_COUNT = 8;					   // 1 being captured + up to 7 waiting for the card (~770 KB)
+constexpr int SLOT_COUNT = 12;					   // maximum; 1 being captured + up to 11 waiting for the card (1.15 MB; 0.37 s at 30 fps)
 constexpr u32 AUDIO_CHUNK_MAX = 16384;
 constexpr u32 AUDIO_CHUNK_MIN = 8192;			   // write audio as soon as this much is waiting (0.25 s)
 constexpr u32 AUDIO_URGENT = 24576;				   // ... and before video if this much is waiting (0.75 s)
@@ -39,6 +40,8 @@ struct Slot {
 Slot slots[SLOT_COUNT];
 u8 freeList[SLOT_COUNT];
 int freeCount = 0;
+int slotN = SLOT_COUNT;		// buffers actually allocated (at least MIN_SLOTS)
+constexpr int MIN_SLOTS = 4;
 u8 queueSlot[SLOT_COUNT];
 u32 queueTime[SLOT_COUNT];
 int queueHead = 0, queueCount = 0;
@@ -55,8 +58,14 @@ bool innerCam = false;
 StopReason pending = STOP_NONE;
 std::string tmpPath;
 
+int fpsSetting = fpsutil::DEFAULT_FPS;
+int recFps = fpsutil::DEFAULT_FPS;
+u32 capturedCount = 0, storedCount = 0, bufferPeak = 0;
+u64 writeMsSum = 0;
+u32 writeCount = 0, writeMsMax = 0;
+
 u32 startTicks = 0;
-u32 nextIndex = 0;			// next frame slot (frame k is due at k * interval)
+u32 nextIndex = 0;			// next frame slot (frame k is due at fpsutil::dueMs(k))
 int consecutiveSkips = 0;
 u32 skippedDue = 0;
 int slowWrites = 0;
@@ -78,12 +87,16 @@ void freeBuffers() {
 }
 
 bool allocBuffers() {
+	slotN = 0;
 	for (int i = 0; i < SLOT_COUNT; i++) {
 		slots[i].base = (u8 *)memalign(32, SLOT_BYTES);
-		if (!slots[i].base) {
-			freeBuffers();
-			return false;
-		}
+		if (!slots[i].base)
+			break;
+		slotN++;
+	}
+	if (slotN < MIN_SLOTS) {
+		freeBuffers();
+		return false;
 	}
 	audioChunk = (u8 *)memalign(32, 32 + AUDIO_CHUNK_MAX);
 	if (!audioChunk) {
@@ -91,7 +104,7 @@ bool allocBuffers() {
 		return false;
 	}
 	freeCount = 0;
-	for (int i = SLOT_COUNT - 1; i >= 1; i--)
+	for (int i = slotN - 1; i >= 1; i--)
 		freeList[freeCount++] = (u8)i;
 	current = 0;
 	shown = -1;
@@ -111,7 +124,7 @@ void noteWriteError() {
 bool writeOneVideo() {
 	const int s = queueSlot[queueHead];
 	const u32 t = queueTime[queueHead];
-	queueHead = (queueHead + 1) % SLOT_COUNT;
+	queueHead = (queueHead + 1) % slotN;
 	queueCount--;
 
 	const u32 before = msclock::ticks();
@@ -119,6 +132,12 @@ bool writeOneVideo() {
 	const u32 ms = msclock::toMs(msclock::ticks() - before);
 	if (ms > SLOW_WRITE_MS)
 		slowWrites++;
+	writeMsSum += ms;
+	writeCount++;
+	if (ms > writeMsMax)
+		writeMsMax = ms;
+	if (ok)
+		storedCount++;
 
 	freeList[freeCount++] = (u8)s;
 	if (!ok)
@@ -175,7 +194,8 @@ bool start(bool innerCamera, std::string &error) {
 	params.innerCamera = innerCamera;
 	params.audio = audioOn;
 	params.audioRate = (u16)audioRec::SAMPLE_RATE;
-	params.fpsNum = (u16)(1000 / FRAME_INTERVAL_MS);
+	recFps = fpsutil::sanitize(fpsSetting);
+	params.fpsNum = (u16)recFps;
 	params.startUnix = (u32)time(NULL);
 	if (!writer.open(tmpPath, params)) {
 		error = (writer.lastError() == ENOSPC) ? "SD card full" : "Cannot create file";
@@ -191,6 +211,9 @@ bool start(bool innerCamera, std::string &error) {
 	consecutiveSkips = 0;
 	skippedDue = 0;
 	slowWrites = 0;
+	capturedCount = storedCount = bufferPeak = 0;
+	writeMsSum = 0;
+	writeCount = writeMsMax = 0;
 	audioPosBytes = 0;
 	msclock::start();
 	startTicks = msclock::ticks();
@@ -204,6 +227,31 @@ u32 elapsedMs() { return recording ? nowMs() : 0; }
 u32 queuedFrames() { return (u32)queueCount; }
 u32 skippedDueFrames() { return skippedDue; }
 bool hasMicData() { return audioOn && audioRec::gotData(); }
+void setFps(int f) {
+	if (!recording)
+		fpsSetting = fpsutil::sanitize(f);
+}
+int fps() { return recording ? recFps : fpsSetting; }
+int slotCount() { return slotN; }
+
+Stats stats() {
+	Stats s;
+	s.fps = fps();
+	s.elapsedMs = elapsedMs();
+	s.captured = capturedCount;
+	s.stored = storedCount;
+	const u32 expected = recording ? fpsutil::expectedFrames(s.elapsedMs, recFps) : 0;
+	const u32 have = storedCount + (u32)queueCount + 1; // +1: the frame being captured right now
+	s.dropped = expected > have ? expected - have : 0;
+	s.queued = (u32)queueCount;
+	s.bufferPeak = bufferPeak;
+	s.sdAvgMs = writeCount ? (u32)(writeMsSum / writeCount) : 0;
+	s.sdMaxMs = writeMsMax;
+	s.capturedFpsX100 = fpsutil::averageFpsX100(capturedCount, s.elapsedMs);
+	s.micActive = audioOn;
+	s.micData = audioOn && audioRec::gotData();
+	return s;
+}
 
 void frameCaptured() {
 	if (!recording || current < 0)
@@ -211,9 +259,10 @@ void frameCaptured() {
 	DC_InvalidateRange(slots[current].pixels(), nvid::FRAME_BYTES); // the camera DMA wrote this behind the cache
 	shown = current;
 
+	capturedCount++;
 	const u32 now = nowMs();
-	// a frame is due a little before its exact time, so a 30 fps camera lands within +-17 ms of the 10 fps grid
-	if (now + 20 < nextIndex * FRAME_INTERVAL_MS)
+	// a frame is due a little before its exact time (fpsutil::slackMs), so camera jitter does not skip slots
+	if (!fpsutil::isDue(now, nextIndex, recFps))
 		return; // not due: the same buffer is reused for the next frame
 
 	if (freeCount == 0) {
@@ -224,12 +273,14 @@ void frameCaptured() {
 	}
 	consecutiveSkips = 0;
 
-	queueSlot[(queueHead + queueCount) % SLOT_COUNT] = (u8)current;
-	queueTime[(queueHead + queueCount) % SLOT_COUNT] = now;
+	queueSlot[(queueHead + queueCount) % slotN] = (u8)current;
+	queueTime[(queueHead + queueCount) % slotN] = now;
 	queueCount++;
+	if ((u32)queueCount > bufferPeak)
+		bufferPeak = (u32)queueCount;
 	current = freeList[--freeCount];
 
-	u32 k = (now + FRAME_INTERVAL_MS / 2) / FRAME_INTERVAL_MS;
+	u32 k = fpsutil::nearestIndex(now, recFps);
 	if (k < nextIndex)
 		k = nextIndex;
 	nextIndex = k + 1;
@@ -277,10 +328,13 @@ Result stop(StopReason reason) {
 
 	nvid::Final fin;
 	// frames that were due in the recorded time but are not in the file
-	const u32 expected = (endMs + FRAME_INTERVAL_MS / 2) / FRAME_INTERVAL_MS;
+	const u32 expected = fpsutil::expectedFrames(endMs, recFps);
 	fin.droppedFrames = expected > writer.frames() ? expected - writer.frames() : 0;
 	fin.framesDropped = fin.droppedFrames > 2;
 	fin.durationMs = endMs;
+	fin.audioFailed = audioOn && !r.hasAudio;
+	fin.maxWriteMs = writeMsMax;
+	fin.capturedFrames = capturedCount;
 	const u32 frames = writer.frames();
 	const bool finished = writer.finish(fin);
 	(void)finished;
@@ -296,6 +350,12 @@ Result stop(StopReason reason) {
 	r.frames = frames;
 	r.droppedFrames = fin.droppedFrames;
 	r.durationMs = endMs;
+	r.requestedFps = recFps;
+	r.avgFpsX100 = fpsutil::averageFpsX100(frames, endMs);
+	r.capturedFrames = capturedCount;
+	r.maxWriteMs = writeMsMax;
+	r.avgWriteMs = writeCount ? (u32)(writeMsSum / writeCount) : 0;
+	r.bufferPeak = bufferPeak;
 
 	if (frames == 0) {
 		remove(tmpPath.c_str()); // nothing worth keeping

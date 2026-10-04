@@ -47,6 +47,7 @@ constexpr u32 FLAG_COMPLETE = 1u << 0;	  // the recording ended cleanly and the 
 constexpr u32 FLAG_HAS_AUDIO = 1u << 1;
 constexpr u32 FLAG_INNER_CAMERA = 1u << 2;
 constexpr u32 FLAG_FRAMES_DROPPED = 1u << 3; // the SD card could not keep up at some point
+constexpr u32 FLAG_AUDIO_FAILED = 1u << 4;	  // a microphone was requested but produced no usable audio track
 
 struct __attribute__((packed)) Header {
 	u32 magic;			// 'NVID'
@@ -68,7 +69,8 @@ struct __attribute__((packed)) Header {
 	u32 indexCount;		// patched
 	u32 flags;			// patched
 	u32 startUnix;		// local time the recording started (seconds since 1970)
-	u32 reserved[2];
+	u32 maxWriteMs;		// patched (Phase 2C, 0 in older files): slowest single SD write
+	u32 capturedFrames;	// patched (Phase 2C, 0 in older files): frames delivered by the camera while recording
 };
 static_assert(sizeof(Header) == HEADER_SIZE, "NVID header must be 64 bytes");
 
@@ -90,7 +92,7 @@ struct WriteParams {
 	bool innerCamera = false;
 	bool audio = false;
 	u16 audioRate = 16000;
-	u16 fpsNum = 10;
+	u16 fpsNum = 10;	// the REQUESTED frame rate
 	u32 startUnix = 0;
 };
 
@@ -98,6 +100,9 @@ struct Final {
 	u32 durationMs = 0;
 	u32 droppedFrames = 0;
 	bool framesDropped = false;
+	bool audioFailed = false;
+	u32 maxWriteMs = 0;
+	u32 capturedFrames = 0;
 };
 
 class Writer {
