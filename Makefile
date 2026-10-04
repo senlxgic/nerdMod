@@ -8,7 +8,7 @@ export PROJECT	:=	$(CURDIR)
 #---------------------------------------------------------------------------------
 # Goals for Build
 #---------------------------------------------------------------------------------
-.PHONY: all package camera booter booter_fc 3dssplash gbapatcher quickmenu manual resources romsel_aktheme romsel_dsimenutheme romsel_r4theme settings slot1launch title
+.PHONY: all package camera photos booter booter_fc 3dssplash gbapatcher quickmenu manual resources romsel_aktheme romsel_dsimenutheme romsel_r4theme settings slot1launch title
 
 all:	booter booter_fc 3dssplash gbapatcher quickmenu manual resources romsel_aktheme romsel_dsimenutheme romsel_r4theme settings slot1launch title
 
@@ -21,6 +21,7 @@ package:
 	@$(MAKE) -C manual dist
 	@$(MAKE) -C imageview dist
 	@$(MAKE) -C camera dist
+	@$(MAKE) -C photos dist
 	@$(MAKE) -C resources
 	@$(MAKE) -C romsel_aktheme dist
 	@$(MAKE) -C romsel_dsimenutheme dist
@@ -53,6 +54,9 @@ manual:
 
 camera:
 	@$(MAKE) -C camera
+
+photos:
+	@$(MAKE) -C photos
 
 imageview:
 	@$(MAKE) -C imageview
@@ -91,6 +95,7 @@ clean:
 	@$(MAKE) -C manual clean
 	@$(MAKE) -C imageview clean
 	@$(MAKE) -C camera clean
+	@$(MAKE) -C photos clean
 	@$(MAKE) -C romsel_aktheme clean
 	@$(MAKE) -C romsel_dsimenutheme clean
 	@$(MAKE) -C romsel_r4theme clean
@@ -116,6 +121,7 @@ clean:
 	@rm -rf "$(PACKAGE)/_nds/TWiLightMenu/manual.srldr"
 	@rm -rf "$(PACKAGE)/Multimedia/_nds/TWiLightMenu/imageview.srldr"
 	@rm -rf "$(PACKAGE)/_nds/TWiLightMenu/camera.srldr"
+	@rm -rf "$(PACKAGE)/_nds/TWiLightMenu/photos.srldr"
 	@rm -rf "$(PACKAGE)/_nds/TWiLightMenu/r4menu.srldr"
 	@rm -rf "$(PACKAGE)/_nds/TWiLightMenu/settings.srldr"
 	@rm -rf "$(PACKAGE)/_nds/TWiLightMenu/slot1launch.srldr"

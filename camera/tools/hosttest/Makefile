@@ -1,8 +1,12 @@
-test: test_container test_fps test_audio test_audiofmt
+test: test_container test_fps test_audio test_audiofmt test_bmpscale
 	./test_container
 	./test_fps
 	./test_audio
 	./test_audiofmt
+	./test_bmpscale
+
+test_bmpscale: test_bmpscale.cpp ../../arm9/source/bmpscale.h
+	g++ -std=gnu++17 -O1 -g -Wall -Wextra -o $@ test_bmpscale.cpp
 
 test_audiofmt: test_audiofmt.cpp ../../arm9/source/audiofmt.h
 	g++ -std=gnu++17 -O1 -g -Wall -Wextra -o $@ test_audiofmt.cpp -lm
@@ -17,4 +21,4 @@ test_container: test_container.cpp ../../arm9/source/videoContainer.cpp ../../ar
 	g++ -std=gnu++17 -O1 -g -Wall -Wextra -I. -o $@ test_container.cpp ../../arm9/source/videoContainer.cpp
 
 clean:
-	rm -f test_container test_fps test_audio test_audiofmt
+	rm -f test_container test_fps test_audio test_audiofmt test_bmpscale

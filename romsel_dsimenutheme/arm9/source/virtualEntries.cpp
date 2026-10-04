@@ -28,9 +28,17 @@ bool cameraAvailable(const BuiltInApp &app) {
 	return fileExists(appFolder() + app.launchPath);
 }
 
+bool photosAvailable(const BuiltInApp &app) {
+	if (ms().kioskMode || !dsiFeatures())
+		return false;
+	return fileExists(appFolder() + app.launchPath);
+}
+
 // The registry. Order = order of the tiles. A new built-in app is one more line here.
 const BuiltInApp apps[] = {
 	{"camera", "Camera", "camera.srldr", nullptr, cameraAvailable},
+	// Photos works on any DSi-family console (it only reads picture files) and is offered once photos.srldr is installed.
+	{"photos", "Photos", "photos.srldr", nullptr, photosAvailable},
 };
 
 } // namespace
