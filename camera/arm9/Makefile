@@ -23,7 +23,7 @@ TARGET		:=	camera
 BUILD		:=	build
 SOURCES		:=	source $(UNIVERSAL)/source/common $(UNIVERSAL)/source/nds_loader $(UNIVERSAL)/source/tonccpy $(UNIVERSAL)/sdmmc/arm9/source
 INCLUDES	:=	source ../include $(UNIVERSAL)/include $(UNIVERSAL)/arm9/include $(UNIVERSAL)/sdmmc/arm9/include
-DATA		:=	../data
+DATA		:=	../assets
 GRAPHICS	:=
 MUSIC		:=
 
