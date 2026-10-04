@@ -87,6 +87,7 @@ class Texture
 		void loadPaletted(FILE* file) noexcept;
 		void loadCompressed(FILE* file) noexcept;
 		void loadPNG(const std::string &path) noexcept;
+		bool loadPngFromCache(const std::string &cacheFile, u32 srcSize, u32 srcMtime, u32 pathHash);
 };
 
 

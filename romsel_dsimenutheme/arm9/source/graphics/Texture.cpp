@@ -6,6 +6,12 @@
 #include "common/lodepng.h"
 // #include "common/ColorLut.h"
 #include <math.h>
+#include <dirent.h>
+#include <string.h>
+#include <strings.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <vector>
 
 extern bool useTwlCfg;
 extern u16* colorTable;
@@ -168,16 +174,176 @@ void Texture::loadBitmap(FILE *file) noexcept {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Decoded-PNG cache (nerdMod)
+//
+// Decoding a full-screen PNG with lodepng on the DSi's ARM9 is slow, and every
+// return from a game is a cold menu start that decodes the same theme PNGs
+// again. We cache the *intermediate* RGB555+opaque-flag array (before
+// bmpToDS(), so the user's colour LUT is never baked in) under
+//   <dev>:/_nds/TWiLightMenu/cache/themebg/<fnv1a(path)>.nbg
+//
+// Safety:
+//  - Entry is valid only if magic/version, source path hash, source file size
+//    AND source mtime, dimensions and a payload checksum all match.
+//    Replacing/editing a theme PNG changes size or mtime => re-decode.
+//  - ANY problem (missing, short, corrupt, stat failure, write failure) falls
+//    back to the original decode path. The cache is never required.
+//  - Written to a temp name and renamed, so a half-written file is never read.
+//  - Bounded: PNGs larger than 512 KB decoded, or tiny (<4096 px), are not
+//    cached; when the directory holds >= 32 entries it is flushed first
+//    (max ~3 MB at 96 KB per full-screen entry).
+// ---------------------------------------------------------------------------
+namespace {
+
+constexpr u32 NBG_MAGIC = 0x4742424E; // "NBBG"
+constexpr u32 NBG_VERSION = 1;
+constexpr u32 NBG_MIN_PIXELS = 4096;
+constexpr u32 NBG_MAX_PIXELS = 256 * 1024;
+constexpr int NBG_MAX_ENTRIES = 32;
+
+struct NbgHeader {
+	u32 magic, version, width, height, srcSize, srcMtime, pathHash, checksum;
+};
+
+u32 nbgHashPath(const char *s) {
+	u32 h = 2166136261u;
+	for (; *s; s++)
+		h = (h ^ (u8)*s) * 16777619u;
+	return h;
+}
+
+u32 nbgChecksum(const u16 *data, u32 count) {
+	u32 sum = 0x811C9DC5u;
+	for (u32 i = 0; i < count; i++)
+		sum = ((sum << 5) | (sum >> 27)) ^ data[i];
+	return sum;
+}
+
+// Builds "<dev>:/_nds/TWiLightMenu/cache/themebg" (dir) from an sd:/ or fat:/ path.
+bool nbgCacheDir(const std::string &path, std::string &dir) {
+	if (path.compare(0, 4, "sd:/") == 0)
+		dir = "sd:/_nds/TWiLightMenu/cache/themebg";
+	else if (path.compare(0, 5, "fat:/") == 0)
+		dir = "fat:/_nds/TWiLightMenu/cache/themebg";
+	else
+		return false;
+	return true;
+}
+
+void nbgFlushIfFull(const std::string &dir) {
+	DIR *d = opendir(dir.c_str());
+	if (!d)
+		return;
+	std::vector<std::string> files;
+	while (dirent *e = readdir(d)) {
+		const size_t len = strlen(e->d_name);
+		if (len > 4 && strcasecmp(e->d_name + len - 4, ".nbg") == 0)
+			files.emplace_back(e->d_name);
+		else if (len > 4 && strcasecmp(e->d_name + len - 4, ".tmp") == 0)
+			files.emplace_back(e->d_name);
+	}
+	closedir(d);
+	if ((int)files.size() >= NBG_MAX_ENTRIES) {
+		for (const std::string &f : files)
+			unlink((dir + "/" + f).c_str());
+	}
+}
+
+} // namespace
+
+// Fills _texture with the intermediate array from the cache. Returns false (and
+// leaves no state behind) on any mismatch.
+bool Texture::loadPngFromCache(const std::string &cacheFile, u32 srcSize, u32 srcMtime, u32 pathHash) {
+	FILE *f = fopen(cacheFile.c_str(), "rb");
+	if (!f)
+		return false;
+
+	NbgHeader h;
+	bool ok = fread(&h, sizeof(h), 1, f) == 1 && h.magic == NBG_MAGIC && h.version == NBG_VERSION && h.pathHash == pathHash &&
+			  h.srcSize == srcSize && h.srcMtime == srcMtime && h.width > 0 && h.height > 0 && h.width <= 1024 && h.height <= 1024 &&
+			  h.width * h.height >= NBG_MIN_PIXELS && h.width * h.height <= NBG_MAX_PIXELS;
+	if (ok) {
+		const u32 count = h.width * h.height;
+		std::unique_ptr<u16[]> tex = std::make_unique<u16[]>(count);
+		ok = fread(tex.get(), sizeof(u16), count, f) == count && nbgChecksum(tex.get(), count) == h.checksum;
+		if (ok) {
+			// Same conversion the PNG path always did, applied now so the
+			// colour LUT in effect for THIS run is used.
+			for (u32 i = 0; i < count; i++)
+				tex[i] = (tex[i] & 0x8000) ? bmpToDS(tex[i] & 0x7FFF) : 0;
+			_texWidth = h.width;
+			_texHeight = h.height;
+			_texLength = count;
+			_texture = std::move(tex);
+		}
+	}
+	fclose(f);
+	return ok;
+}
+
 void Texture::loadPNG(const std::string &path) {
+	std::string cacheDir, cacheFile, tmpFile;
+	u32 srcSize = 0, srcMtime = 0, pathHash = 0;
+	bool cacheable = false;
+
+	struct stat st;
+	if (nbgCacheDir(path, cacheDir) && stat(path.c_str(), &st) == 0 && st.st_size > 0) {
+		srcSize = (u32)st.st_size;
+		srcMtime = (u32)st.st_mtime;
+		pathHash = nbgHashPath(path.c_str());
+		char name[24];
+		snprintf(name, sizeof(name), "/%08lx.nbg", (unsigned long)pathHash);
+		cacheFile = cacheDir + name;
+		tmpFile = cacheFile.substr(0, cacheFile.size() - 4) + ".tmp";
+		cacheable = true;
+		if (loadPngFromCache(cacheFile, srcSize, srcMtime, pathHash))
+			return;
+	}
+
 	std::vector<unsigned char> buffer;
 	unsigned width, height;
-	lodepng::decode(buffer, width, height, path);
+	const unsigned error = lodepng::decode(buffer, width, height, path);
 	_texWidth = width;
 	_texHeight = height;
 	_texLength = _texWidth * _texHeight;
 
 	// Convert to DS bitmap format
 	_texture = std::make_unique<u16[]>(_texWidth * _texHeight);
+
+	const bool storeCache = cacheable && error == 0 && buffer.size() == (size_t)_texLength * 4 && _texLength >= NBG_MIN_PIXELS &&
+							_texLength <= NBG_MAX_PIXELS && width <= 1024 && height <= 1024;
+
+	if (storeCache) {
+		// Intermediate form: 0x8000 | RGB555 for opaque pixels, 0 otherwise.
+		for (uint i = 0; i < _texLength; i++) {
+			if (buffer[(i * 4) + 3] == 0xFF) {
+				_texture[i] = 0x8000 | ((buffer[i * 4] >> 3) << 10 | (buffer[(i * 4) + 1] >> 3) << 5 | buffer[(i * 4) + 2] >> 3);
+			}
+		}
+
+		bool written = false;
+		nbgFlushIfFull(cacheDir);
+		mkdir(cacheDir.substr(0, cacheDir.rfind('/')).c_str(), 0777); // .../cache
+		mkdir(cacheDir.c_str(), 0777);						// .../cache/themebg
+		FILE *f = fopen(tmpFile.c_str(), "wb");
+		if (f) {
+			NbgHeader h = {NBG_MAGIC, NBG_VERSION, width, height, srcSize, srcMtime, pathHash, nbgChecksum(_texture.get(), _texLength)};
+			written = fwrite(&h, sizeof(h), 1, f) == 1 && fwrite(_texture.get(), sizeof(u16), _texLength, f) == _texLength;
+			written = (fclose(f) == 0) && written;
+			if (written) {
+				unlink(cacheFile.c_str());
+				written = rename(tmpFile.c_str(), cacheFile.c_str()) == 0;
+			}
+			if (!written)
+				unlink(tmpFile.c_str());
+		}
+
+		for (uint i = 0; i < _texLength; i++)
+			_texture[i] = (_texture[i] & 0x8000) ? bmpToDS(_texture[i] & 0x7FFF) : 0;
+		return;
+	}
+
 	for (uint i=0;i<buffer.size()/4;i++) {
 		if (buffer[(i * 4) + 3] == 0xFF) { // Only keep full opacity pixels
 			_texture[i] = bmpToDS((buffer[i * 4] >> 3) << 10 | (buffer[(i * 4) + 1] >> 3) << 5 | buffer[(i * 4) + 2] >> 3);
