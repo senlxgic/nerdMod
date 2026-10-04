@@ -407,7 +407,7 @@ void getDirectoryContents(std::vector<DirEntry> &dirContents, const std::vector<
 
 			getcwd(path, PATH_MAX);
 			for (DirEntry &dirEntry : dirContents) {
-				dirEntry.position = timesPlayedIni.GetInt(path, dirEntry.name, 0);
+				dirEntry.position = timesPlayedIni.GetInt(path, dirEntry.name); // 2-arg form: missing = 0, no default insertion
 			}
 
 			std::sort(dirContents.begin(), dirContents.end(), [](const DirEntry &lhs, const DirEntry &rhs) {
@@ -2903,8 +2903,9 @@ static bool previousPage(SwitchState scrn, const vector<vector<DirEntry>> &dirCo
 	stopSoundPlayed = false;
 	clearText();
 	updateText(false);
-	ms().saveSettings();
-	settingsChanged = false;
+	// Deferred: PAGENUM is persisted by the existing settingsChanged path on launch/exit,
+	// the same way cursor position already is, instead of rewriting settings.ini per page flip.
+	settingsChanged = true;
 	if (showLshoulder) {
 		displayNowLoading();
 	} else {
@@ -2980,8 +2981,9 @@ static bool nextPage(SwitchState scrn, const vector<vector<DirEntry>> &dirConten
 	stopSoundPlayed = false;
 	clearText();
 	updateText(false);
-	ms().saveSettings();
-	settingsChanged = false;
+	// Deferred: PAGENUM is persisted by the existing settingsChanged path on launch/exit,
+	// the same way cursor position already is, instead of rewriting settings.ini per page flip.
+	settingsChanged = true;
 	if (showRshoulder) {
 		displayNowLoading();
 	} else {
