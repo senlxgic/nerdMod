@@ -168,6 +168,7 @@ int main() {
 	SetYtrigger(80);
 
 	my_installSystemFIFO();
+	installSoundFIFO();	// microphone capture for video recording (best effort, see audioRecorder.cpp)
 	fifoSetValue32Handler(NMCAM_FIFO_CHANNEL, camFifoHandler, NULL);
 
 	irqSet(IRQ_VCOUNT, VcountHandler);
