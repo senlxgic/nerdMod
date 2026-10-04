@@ -23,7 +23,8 @@ CHUNK = struct.Struct("<4sIII")
 FRAME_W, FRAME_H = 256, 192
 FRAME_BYTES = FRAME_W * FRAME_H * 2
 
-FLAG_COMPLETE, FLAG_HAS_AUDIO, FLAG_INNER, FLAG_DROPPED = 1, 2, 4, 8
+FLAG_COMPLETE, FLAG_HAS_AUDIO, FLAG_INNER, FLAG_DROPPED, FLAG_AUDIO_FAILED = 1, 2, 4, 8, 16
+VALID_FPS = (10, 15, 20, 30)
 
 
 class NvidError(Exception):
@@ -40,7 +41,7 @@ def read_header(f):
         raise NvidError("not a NERDVID file")
     if version != 1 or (w, h) != (FRAME_W, FRAME_H) or video_fmt != 1:
         raise NvidError("unsupported NERDVID variant (version %d, %dx%d, format %d)" % (version, w, h, video_fmt))
-    return dict(header_size=hdr_size, frames=frames, dropped=dropped, duration_ms=duration, audio_bytes=audio_bytes,
+    return dict(version=version, fps_num=fps_num, fps_den=fps_den or 1, max_write_ms=r0, captured=r1, header_size=hdr_size, frames=frames, dropped=dropped, duration_ms=duration, audio_bytes=audio_bytes,
                 audio_format=audio_fmt, audio_rate=audio_rate or 16000, audio_channels=audio_ch or 1, index_offset=index_off,
                 index_count=index_cnt, flags=flags, start_unix=start_unix)
 
@@ -64,23 +65,41 @@ def iter_chunks(f, info):
         yield fourcc, time_ms, payload
 
 
+def scan(f, info):
+    """Returns (video_frame_times, audio_chunks[(time_ms, bytes)])."""
+    times, audio = [], []
+    for fourcc, t, p in iter_chunks(f, info):
+        if fourcc == b"VFRM":
+            times.append(t)
+        else:
+            audio.append((t, p))
+    return times, audio
+
+
+def average_fps(times, info):
+    dur = info["duration_ms"] or (times[-1] if times else 0)
+    return (len(times) * 1000.0 / dur) if dur else 0.0
+
+
 def cmd_info(args):
     with open(args.input, "rb") as f:
         info = read_header(f)
-        frames = audio = 0
-        last = 0
-        for fourcc, t, p in iter_chunks(f, info):
-            if fourcc == b"VFRM":
-                frames += 1
-                last = t
-            else:
-                audio += len(p)
+        times, audio = scan(f, info)
+    dur = (info["duration_ms"] or (times[-1] if times else 0)) / 1000.0
+    audio_bytes = sum(len(p) for _, p in audio)
     print("file          :", args.input)
+    print("container     : NERDVID v%d" % info["version"])
     print("complete      :", bool(info["flags"] & FLAG_COMPLETE))
     print("camera        :", "inner" if info["flags"] & FLAG_INNER else "outer")
-    print("frames        : %d (header says %d, %d skipped)" % (frames, info["frames"], info["dropped"]))
-    print("duration      : %.1f s" % ((info["duration_ms"] or last) / 1000.0))
-    print("audio         : %s (%d bytes, %d Hz)" % ("yes" if info["audio_format"] == 1 else "no", audio, info["audio_rate"]))
+    print("requested fps : %d" % (info["fps_num"] // info["fps_den"]))
+    print("actual avg fps: %.2f (from timestamps)" % average_fps(times, info))
+    print("frames        : %d (header says %d)" % (len(times), info["frames"]))
+    print("dropped       : %d" % info["dropped"])
+    print("duration      : %.1f s" % dur)
+    print("audio         : %s (%d bytes, %d Hz)%s" % ("yes" if info["audio_format"] == 1 and audio_bytes else "no", audio_bytes, info["audio_rate"],
+                                                     ", microphone gave no data" if info["flags"] & FLAG_AUDIO_FAILED else ""))
+    if info["max_write_ms"] or info["captured"]:
+        print("recorder      : camera frames %d, slowest SD write %d ms" % (info["captured"], info["max_write_ms"]))
 
 
 def require_ffmpeg():
@@ -94,18 +113,34 @@ def cmd_to_video(args):
     ffmpeg = require_ffmpeg()
     with open(args.input, "rb") as f, tempfile.TemporaryDirectory() as tmp:
         info = read_header(f)
-        fps = 10
+        # the output rate: the rate that was requested when recording (it is the grid the timestamps sit on); files
+        # from other tools fall back to the nearest supported rate for their measured average
+        fps = info["fps_num"] // info["fps_den"]
+        if fps not in VALID_FPS:
+            probe_times, _ = scan(f, info)
+            avg = average_fps(probe_times, info) if probe_times else 10
+            fps = min(VALID_FPS, key=lambda v: abs(v - avg))
+            f.seek(info["header_size"])
         raw_video = os.path.join(tmp, "video.raw")
         raw_audio = os.path.join(tmp, "audio.raw")
         frames = 0
         with open(raw_video, "wb") as vout, open(raw_audio, "wb") as aout:
             last_frame = None
             next_slot = 0
+            apos = 0  # audio bytes written so far; chunk timestamps decide where each chunk belongs
             for fourcc, t, payload in iter_chunks(f, info):
                 if fourcc == b"AUDI":
+                    start = (t * 32) & ~1  # 16 kHz PCM16 mono = 32 bytes per ms
+                    if start > apos:
+                        aout.write(b"\0" * (start - apos))  # a gap: silence
+                        apos = start
+                    elif start < apos:
+                        cut = apos - start
+                        payload = payload[cut:] if cut < len(payload) else b""
                     aout.write(payload)
+                    apos += len(payload)
                     continue
-                # constant 10 fps output: repeat the previous frame over gaps (skipped frames), never drop a real one
+                # constant-rate output: repeat the previous frame over gaps (dropped frames), never drop a real one
                 slot = int(round(t * fps / 1000.0))
                 if last_frame is not None:
                     while next_slot < slot:
@@ -197,7 +232,7 @@ def main():
     a = sub.add_parser("from-video")
     a.add_argument("input")
     a.add_argument("output")
-    a.add_argument("--fps", type=int, default=10)
+    a.add_argument("--fps", type=int, default=10, choices=VALID_FPS)
     a.add_argument("--no-audio", action="store_true")
     a.set_defaults(fn=cmd_from_video)
     args = ap.parse_args()
