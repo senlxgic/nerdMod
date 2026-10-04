@@ -17,7 +17,7 @@ Chunk  = ChunkHeader (16 bytes) | payload (size bytes, always a multiple of 16)
 | 6 | u16 | headerSize | 64 (chunks start here) |
 | 8 | u16 | width | 256 |
 | 10 | u16 | height | 192 |
-| 12 | u16 | fpsNum | nominal rate (10); timestamps are authoritative |
+| 12 | u16 | fpsNum | the REQUESTED rate: 10, 15, 20 or 30 (Phase 2C; older files: 10). Timestamps are authoritative |
 | 14 | u16 | fpsDen | 1 |
 | 16 | u32 | videoFrames | patched at the end |
 | 20 | u32 | droppedFrames | frames that were due but could not be stored (SD too slow) |
@@ -29,9 +29,10 @@ Chunk  = ChunkHeader (16 bytes) | payload (size bytes, always a multiple of 16)
 | 38 | u16 | videoFormat | 1 = RGB555 |
 | 40 | u32 | indexOffset | 0 = no index |
 | 44 | u32 | indexCount | |
-| 48 | u32 | flags | bit0 COMPLETE (clean stop, index valid), bit1 HAS_AUDIO, bit2 INNER_CAMERA, bit3 FRAMES_DROPPED |
+| 48 | u32 | flags | bit0 COMPLETE (clean stop, index valid), bit1 HAS_AUDIO, bit2 INNER_CAMERA, bit3 FRAMES_DROPPED, bit4 AUDIO_FAILED (Phase 2C: a microphone was requested but produced no data) |
 | 52 | u32 | startUnix | local time at start |
-| 56 | u32[2] | reserved | 0 |
+| 56 | u32 | maxWriteMs | Phase 2C: slowest single SD write while recording (0 in older files) |
+| 60 | u32 | capturedFrames | Phase 2C: frames delivered by the camera while recording (0 in older files) |
 
 ## Chunks
 
@@ -50,10 +51,38 @@ A file without `COMPLETE` (power loss, battery) has no index and no patched coun
 loses at most the last, partly written frame. The temporary name while recording is `REC_TEMP.nvid.tmp`; it is renamed to
 `NV_YYYYMMDD_HHMMSS.nvid` after the clean stop.
 
+## Version policy (Phase 2C)
+
+The container stays at **version 1**. Phase 2C only gives meaning to fields that older files wrote as 0 (`fpsNum` is now the
+requested rate, the two former reserved words carry recorder statistics, flag bit 4). A reader that ignores them reads
+every old and new file; a Phase 2C reader treats 0 as "unknown". The video payload is still RGB555 (`videoFormat` 1):
+the camera is configured to emit RGB555 directly, so recording needs no per-frame CPU conversion. Native YUV422 would be
+the same 2 bytes/pixel (no smaller files) and would add a CPU conversion for the live preview, so a version-2/YUV
+container was **not** introduced. `videoFormat` reserves the numbers for it should that change.
+
+## Frame rates and timestamps
+
+The recorder runs a fixed-point grid on the hardware millisecond clock: slot k is due at `k * 1000 / fps` ms (integer
+maths, no accumulating error). A camera frame is stored when it lands within half an interval (at most 20 ms) before its slot and is
+stamped with its real capture time. Nothing is duplicated or interpolated; a slot with no frame is a *dropped* frame and
+is counted. Actual average rate = frames / duration (the Info page and `nerdvid_convert.py info` show it).
+A camera that delivers 30 frames/s cannot give an evenly spaced 20 fps: slots then alternate 1 and 2 camera periods
+(33/67 ms) - the timestamps say so honestly.
+
 ## Size and bandwidth
 
-One frame is 98,304 B (+16 B header). At about 10 fps that is ≈ 0.98 MB/s of video plus 32 KB/s of audio, about 60 MB per minute.
-The recorder stops by itself at 30 minutes or about 1.5 GB.
+One frame is 98,304 B (+16 B header). With 32 KB/s of audio:
+
+| FPS | MB/min (decimal) | time to the 1500 MiB cap |
+|---|---|---|
+| 10 | 61 | 25 min (30 min limit applies first) |
+| 15 | 90 | 17 min |
+| 20 | 120 | 13 min |
+| 30 | 179 | 8.7 min |
+
+The recorder stops by itself at 30 minutes or 1500 MiB (`MAX_FILE_BYTES`), whichever comes first. FAT32 allows 4 GiB per file and
+all offsets/sizes are `u32`, so 1500 MiB keeps every offset, the index (8 bytes per frame; 30 fps x 30 min = 54,000
+entries = 432 KB) and the final rename well inside the limits.
 
 ## Converting
 
