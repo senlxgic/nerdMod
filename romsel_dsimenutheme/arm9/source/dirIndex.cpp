@@ -32,7 +32,8 @@ bool plainName(const char *s) {
 		return false;
 	for (size_t i = 0; i < len; i++) {
 		const unsigned char c = (unsigned char)s[i];
-		if (c < 0x20 || c >= 0x7F)
+		// '~' is excluded because FAT 8.3 aliases (FOO~1.PNG) are matched by the real lookup
+		if (c < 0x20 || c >= 0x7F || c == '~')
 			return false;
 	}
 	return true;
