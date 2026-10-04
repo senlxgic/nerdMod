@@ -330,5 +330,5 @@ void uiBarText(const char *text) {
 }
 
 void uiDrawDialogPanel() {
-	uiBottomImage(UI_DIALOG, UI_RECT_DIALOG);
+	uiBottomImage(UI_DIALOG, 24, 44); // UI_RECT_DIALOG
 }

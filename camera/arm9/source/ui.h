@@ -35,8 +35,8 @@ void uiTopSetRecording(bool recording, u32 seconds);	// recording indicator + ti
 struct UiButton {
 	int id;
 	short x, y, w, h;
-	short normal;	// UiId
-	short pressed;	// UiId, or -1 for "no pressed look"
+	int normal;		// UiId
+	int pressed;	// UiId, or -1 for "no pressed look"
 	bool enabled;
 };
 
