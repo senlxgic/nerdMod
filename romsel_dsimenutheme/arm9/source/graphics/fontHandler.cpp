@@ -192,6 +192,13 @@ FontGraphic *getFont(bool large) {
 void updateText(bool top) {
 	sassert(!top, "Top screen text must be copied\nmanually.");
 
+	// Nothing was cleared or queued since the last call, so the text buffer is
+	// unchanged and VRAM already holds an identical copy of it (the only writers
+	// of textBuf[false] and of the text layer's VRAM are in this file).
+	// Skip the 48 KB copy to VRAM.
+	if (!shouldClear[top] && getTextQueue(top).empty())
+		return;
+
 	// Clear before redrawing
 	if (shouldClear[top]) {
 		dmaFillWords(0, FontGraphic::textBuf[top], 256 * 192);
