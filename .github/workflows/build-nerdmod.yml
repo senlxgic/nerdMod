@@ -284,11 +284,15 @@ jobs:
           fi
           exit 0
 
-      - name: Upload nerdMod baseline
+      - name: Short commit for the artifact name
+        shell: bash
+        run: echo "SHORT_SHA=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_ENV"
+
+      - name: Upload nerdMod build
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: nerdMod-baseline-v27.24.1
+          name: nerdMod-phase2b1-${{ env.SHORT_SHA }}
           path: |
             7zfile/
             SHA256SUMS.txt
