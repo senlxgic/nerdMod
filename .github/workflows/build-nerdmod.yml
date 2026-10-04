@@ -6,6 +6,9 @@ on:
     branches:
       - nerdmod-dev
 
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Build with devkitARM (pinned 20241104)
@@ -13,6 +16,9 @@ jobs:
 
     container:
       image: devkitpro/devkitarm:20241104
+
+    env:
+      BASELINE_COMMIT: 68d04c1a621a8d330e7233efcfcb93c94b30a3a6
 
     steps:
       - name: Checkout source
@@ -27,7 +33,7 @@ jobs:
           set -euxo pipefail
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
-      - name: Verify baseline
+      - name: Verify nerdMod baseline
         shell: bash
         run: |
           set -euxo pipefail
@@ -35,42 +41,59 @@ jobs:
           echo "Current commit:"
           git rev-parse HEAD
 
+          echo
           echo "Expected nerdMod baseline:"
-          echo "68d04c1a621a8d330e7233efcfcb93c94b30a3a6"
+          echo "$BASELINE_COMMIT"
+
+          echo
+          echo "Verify baseline commit exists:"
+          git cat-file -e "${BASELINE_COMMIT}^{commit}"
+
+          echo
+          echo "Verify current branch descends from baseline:"
+          git merge-base --is-ancestor "$BASELINE_COMMIT" HEAD
 
           echo
           echo "Submodules:"
           git submodule status
 
           echo
-          echo "Application-source changes relative to v27.24.1:"
-          git diff --stat v27.24.1 -- . ':(exclude).github'
+          echo "Application-source changes relative to baseline:"
+          git diff --stat "$BASELINE_COMMIT" -- . ':(exclude).github'
 
-      - name: Configure archived Debian repositories
+      - name: Install build dependencies from pinned Debian snapshot
         shell: bash
         run: |
           set -euxo pipefail
 
-          cat > /etc/apt/sources.list <<'EOF'
+          # Use a historical Debian snapshot matching the era
+          # of devkitpro/devkitarm:20241104.
+          cat > /etc/apt/nerdmod-sources.list <<'EOF'
           deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/20241104T000000Z/ bullseye main
           deb [check-valid-until=no] http://snapshot.debian.org/archive/debian-security/20241104T000000Z/ bullseye-security main
           EOF
 
+          echo "=== nerdMod APT sources ==="
+          cat /etc/apt/nerdmod-sources.list
+          echo "============================"
+
+          # Remove old package metadata baked into the container.
           rm -rf /var/lib/apt/lists/*
+          apt-get clean
 
-          apt-get \
-            -o Acquire::Check-Valid-Until=false \
-            update
+          # Force APT to use ONLY our historical source list.
+          APT_ARGS=(
+            -o Acquire::Check-Valid-Until=false
+            -o Dir::Etc::sourcelist=/etc/apt/nerdmod-sources.list
+            -o Dir::Etc::sourceparts=-
+          )
 
-      - name: Install build dependencies
-        shell: bash
-        run: |
-          set -euxo pipefail
+          apt-get "${APT_ARGS[@]}" update
 
           DEBIAN_FRONTEND=noninteractive \
-          apt-get \
-            -o Acquire::Check-Valid-Until=false \
-            install -y --no-install-recommends \
+          apt-get "${APT_ARGS[@]}" install \
+            -y \
+            --no-install-recommends \
             p7zip-full \
             python \
             curl \
@@ -87,6 +110,7 @@ jobs:
             --fail \
             --location \
             --retry 3 \
+            --retry-delay 2 \
             --output pages.7z \
             https://github.com/DS-Homebrew/twilight-manual/releases/download/pages/pages.7z
 
@@ -98,16 +122,20 @@ jobs:
         run: |
           set -euxo pipefail
 
-          echo "devkitARM:"
-          ${DEVKITARM}/bin/arm-none-eabi-gcc --version || true
+          echo "=== devkitARM ==="
+          "${DEVKITARM}/bin/arm-none-eabi-gcc" --version || true
 
           echo
-          echo "Python:"
+          echo "=== Python ==="
           python --version || true
 
           echo
-          echo "7-Zip:"
-          7z | head -n 3 || true
+          echo "=== 7-Zip ==="
+          7z | head -n 4 || true
+
+          echo
+          echo "=== Git ==="
+          git --version || true
 
       - name: Build nerdMod baseline
         shell: bash
@@ -122,6 +150,8 @@ jobs:
           BUILD_SECONDS=$((END_TIME - START_TIME))
 
           echo "BUILD_SECONDS=$BUILD_SECONDS" >> "$GITHUB_ENV"
+
+          echo
           echo "Build completed in ${BUILD_SECONDS} seconds."
 
       - name: Verify build output
@@ -130,11 +160,12 @@ jobs:
           set -euxo pipefail
 
           if [ ! -d "7zfile" ]; then
-            echo "ERROR: 7zfile directory was not produced."
+            echo "ERROR: make package did not produce 7zfile/"
             exit 1
           fi
 
-          echo "Generated binaries:"
+          echo "=== Generated BOOT.NDS / SRLDR files ==="
+
           find 7zfile \
             -type f \
             \( -name "*.srldr" -o -name "BOOT.NDS" \) \
@@ -146,7 +177,9 @@ jobs:
         run: |
           set -euxo pipefail
 
-          find 7zfile -type f -print0 \
+          find 7zfile \
+            -type f \
+            -print0 \
             | sort -z \
             | xargs -0 sha256sum \
             > SHA256SUMS.txt
@@ -155,8 +188,15 @@ jobs:
         if: always()
         shell: bash
         run: |
-          WARNINGS=$(grep -Eic 'warning:' build.log 2>/dev/null || true)
-          ERRORS=$(grep -Eic 'error:' build.log 2>/dev/null || true)
+          set +e
+
+          if [ -f build.log ]; then
+            WARNINGS=$(grep -Eic 'warning:' build.log || true)
+            ERRORS=$(grep -Eic 'error:' build.log || true)
+          else
+            WARNINGS="unknown"
+            ERRORS="unknown"
+          fi
 
           echo "WARNING_COUNT=$WARNINGS" >> "$GITHUB_ENV"
           echo "ERROR_COUNT=$ERRORS" >> "$GITHUB_ENV"
@@ -170,16 +210,26 @@ jobs:
             echo
             echo "## Source"
             echo
-            echo "- Commit: \`${GITHUB_SHA}\`"
-            echo "- Baseline: \`v27.24.1\`"
-            echo "- Baseline commit: \`68d04c1a621a8d330e7233efcfcb93c94b30a3a6\`"
+            echo "- Current commit: \`${GITHUB_SHA}\`"
+            echo "- Baseline: \`${BASELINE_COMMIT}\`"
             echo "- Container: \`devkitpro/devkitarm:20241104\`"
             echo
             echo "## Build"
             echo
             echo "- Duration: \`${BUILD_SECONDS:-unknown} seconds\`"
-            echo "- Compiler warnings: \`${WARNING_COUNT:-unknown}\`"
-            echo "- Compiler errors: \`${ERROR_COUNT:-unknown}\`"
+            echo "- Warning count: \`${WARNING_COUNT:-unknown}\`"
+            echo "- Error count: \`${ERROR_COUNT:-unknown}\`"
+            echo
+            echo "## Application source diff vs baseline"
+            echo
+            echo '```text'
+
+            git diff --stat \
+              "$BASELINE_COMMIT" \
+              -- . ':(exclude).github' \
+              || true
+
+            echo '```'
             echo
             echo "## Important binaries"
             echo
@@ -192,15 +242,9 @@ jobs:
                 -exec stat --printf='%s bytes  %n\n' {} \; \
                 | sort -k3
             else
-              echo "No 7zfile directory produced."
+              echo "No 7zfile directory was produced."
             fi
 
-            echo '```'
-            echo
-            echo "## Application diff vs upstream baseline"
-            echo
-            echo '```text'
-            git diff --stat v27.24.1 -- . ':(exclude).github' || true
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
