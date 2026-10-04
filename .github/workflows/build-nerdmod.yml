@@ -261,8 +261,11 @@ jobs:
             WARNS=$(grep 'warning:' build.log | sed -E 's/^[^ ]*\/([^\/ ]+:[0-9]+:[0-9]+): /\1: /' | sort | uniq -c | sort -rn | head -25 | enc)
             echo "::notice title=distinct-warnings::${WARNS}"
             ERRS=$(grep -E 'error:|\*\*\* |Error [0-9]' build.log | head -25 | enc)
-            [ -n "$ERRS" ] && echo "::notice title=error-lines::${ERRS}"
+            if [ -n "$ERRS" ]; then
+              echo "::notice title=error-lines::${ERRS}"
+            fi
           fi
+          exit 0
 
       - name: Upload nerdMod baseline
         if: success()
