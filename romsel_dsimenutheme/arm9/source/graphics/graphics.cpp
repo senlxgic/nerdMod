@@ -1546,6 +1546,14 @@ void loadBootstrapScreenshot(FILE *file, const bool bufferOnly) {
 static std::string loadedDate;
 
 ITCM_CODE void drawCurrentDate() {
+	// The formatted date can only change when the RTC second changes, so skip
+	// the localtime()/strftime()/string work unless it did (or a reload was requested).
+	static time_t lastCheckedSecond = (time_t)-1;
+	const time_t nowSecond = time(NULL);
+	if (nowSecond == lastCheckedSecond && !reloadDate)
+		return;
+	lastCheckedSecond = nowSecond;
+
 	// Load date
 	std::string currentDate = getDate();
 	if (currentDate == loadedDate && !reloadDate)
@@ -1561,6 +1569,16 @@ ITCM_CODE void drawCurrentDate() {
 static std::string loadedTime;
 
 ITCM_CODE void drawCurrentTime() {
+	// The formatted time only changes when the RTC second changes or the colon
+	// blinks, so skip the localtime()/strftime()/string work otherwise.
+	static time_t lastCheckedSecond = (time_t)-1;
+	static bool lastCheckedColon = true;
+	const time_t nowSecond = time(NULL);
+	if (nowSecond == lastCheckedSecond && showColon == lastCheckedColon && !reloadTime)
+		return;
+	lastCheckedSecond = nowSecond;
+	lastCheckedColon = showColon;
+
 	// Load time
 	std::string currentTime = retTime();
 	if (currentTime[0] == ' ')
