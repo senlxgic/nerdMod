@@ -4,6 +4,7 @@
 #include <stdio.h>
 
 #include "app.h"
+#include "audioPlayer.h"
 #include "msclock.h"
 #include "ui.h"
 #include "videoContainer.h"
@@ -13,6 +14,8 @@ namespace {
 enum { B_PREV = 1, B_PLAY, B_NEXT, B_BACK };
 
 constexpr u32 SEEK_MS = 5000;
+constexpr u32 ABUF_BYTES = 32768; // largest audio chunk accepted
+constexpr u32 AUDIO_LOOKBACK_MS = 800; // audio chunks are written up to ~0.75 s ahead of their video
 
 void fmtTime(char *out, size_t n, u32 ms) {
 	const u32 s = ms / 1000;
@@ -35,12 +38,14 @@ void drawButtons(bool playing, bool canPlay) {
 PlayerExit playerRun(const std::string &path, const std::string &title) {
 	nvid::Reader reader;
 	u16 *frame = (u16 *)memalign(32, nvid::FRAME_BYTES);
+	u8 *abuf = (u8 *)memalign(32, ABUF_BYTES);
 	uiTextClear();
 	uiTopOverlayVisible(false);
 
 	PlayerExit exitCode = PlayerExit::Back;
-	if (!frame || !reader.open(path)) {
+	if (!frame || !abuf || !reader.open(path)) {
 		free(frame);
+		free(abuf);
 		uiTextClear();
 		uiBottomDrawBackground();
 		uiTextCentred(8, "Cannot play this video.");
@@ -68,11 +73,22 @@ PlayerExit playerRun(const std::string &path, const std::string &title) {
 	u32 frameTime = 0;
 	msclock::start();
 
-	auto nowPos = [&]() -> u32 { return msclock::toMs(msclock::ticks() - baseTicks); };
+	// With sound the audio clock is the master; without it the millisecond clock.
+	auto nowPos = [&]() -> u32 { return audioPlay::active() ? audioPlay::positionMs() : msclock::toMs(msclock::ticks() - baseTicks); };
 	auto currentPos = [&]() -> u32 { return playing ? nowPos() : position; };
 	auto startAt = [&](u32 ms) {
 		position = ms;
 		baseTicks = msclock::ticks() - (u32)(((u64)ms * 33513982ull) / 1024000ull);
+	};
+	// Positions the file and both clocks at `ms` and starts the audio (when the file has any and we are playing).
+	auto beginAt = [&](u32 ms, bool play) {
+		audioPlay::stop();
+		haveFrame = false;
+		const bool withAudio = play && reader.hasAudio();
+		reader.seekToTime(withAudio && ms > AUDIO_LOOKBACK_MS ? ms - AUDIO_LOOKBACK_MS : ms);
+		startAt(ms);
+		if (withAudio)
+			audioPlay::start(ms); // false = no sound, the video clock keeps time
 	};
 	auto updateText = [&](u32 ms) {
 		char cur[16], line[32];
@@ -91,9 +107,15 @@ PlayerExit playerRun(const std::string &path, const std::string &title) {
 	// reading their pixels). Returns false at the end of the data.
 	auto fetch = [&](bool allowSkip) -> bool {
 		nvid::Reader::Chunk c;
-		for (int guard = 0; guard < 6; guard++) {
+		for (int guard = 0; guard < 12; guard++) {
 			if (!reader.nextChunk(c))
 				return false;
+			if (c.fourcc == nvid::CHUNK_AUDIO && audioPlay::active() && c.size <= ABUF_BYTES) {
+				if (!reader.readPayload(abuf, c.size))
+					return false;
+				audioPlay::feed(c.timeMs, abuf, c.size);
+				continue;
+			}
 			if (c.fourcc == nvid::CHUNK_VIDEO && c.size == nvid::FRAME_BYTES) {
 				if (allowSkip && nowPos() > c.timeMs + 150) {
 					if (!reader.skipPayload(c.size))
@@ -115,8 +137,7 @@ PlayerExit playerRun(const std::string &path, const std::string &title) {
 	uiTextClear();
 	drawButtons(true, true);
 	uiBarText(title.c_str());
-	reader.rewind();
-	startAt(0);
+	beginAt(0, true);
 	updateText(0);
 	u32 lastShownSecond = 0xFFFFFFFF;
 
@@ -134,7 +155,7 @@ PlayerExit playerRun(const std::string &path, const std::string &title) {
 			const u32 pos = currentPos();
 			appLidSleep(CAM_NONE);
 			if (playing)
-				startAt(pos);
+				beginAt(pos, true);
 			continue;
 		}
 
@@ -155,17 +176,16 @@ PlayerExit playerRun(const std::string &path, const std::string &title) {
 
 		if (action == B_PLAY) {
 			if (atEnd) {
-				reader.rewind();
 				atEnd = false;
-				haveFrame = false;
 				playing = true;
-				startAt(0);
+				beginAt(0, true);
 			} else if (playing) {
 				position = nowPos();
 				playing = false;
+				audioPlay::stop();
 			} else {
-				startAt(position);
 				playing = true;
+				beginAt(position, true);
 			}
 			uiSetButtonImages(B_PLAY, playing ? UI_BTN_PAUSE : UI_BTN_PLAY, playing ? UI_BTN_PAUSE_P : UI_BTN_PLAY_P);
 		} else if (action == B_PREV || action == B_NEXT) {
@@ -173,10 +193,8 @@ PlayerExit playerRun(const std::string &path, const std::string &title) {
 			u32 target = (action == B_PREV) ? (pos > SEEK_MS ? pos - SEEK_MS : 0) : pos + SEEK_MS;
 			if (target >= duration)
 				target = duration > 300 ? duration - 300 : 0;
-			reader.seekToTime(target);
 			atEnd = false;
-			haveFrame = false;
-			startAt(target);
+			beginAt(target, playing);
 			if (!playing) {
 				// paused: show the picture at the new position, then stay there
 				if (fetch(false) && haveFrame)
@@ -187,11 +205,13 @@ PlayerExit playerRun(const std::string &path, const std::string &title) {
 			lastShownSecond = target / 1000;
 		}
 
+		audioPlay::update();
 		if (playing && !atEnd) {
 			if (!haveFrame && !fetch(true)) {
 				atEnd = true;
 				playing = false;
 				position = duration;
+				audioPlay::stop();
 				uiSetButtonImages(B_PLAY, UI_BTN_PLAY, UI_BTN_PLAY_P);
 			}
 			if (haveFrame && nowPos() + 5 >= frameTime)
@@ -207,9 +227,11 @@ PlayerExit playerRun(const std::string &path, const std::string &title) {
 		swiWaitForVBlank();
 	}
 
+	audioPlay::stop();
 	msclock::stop();
 	reader.close();
 	free(frame);
+	free(abuf);
 	uiTopOverlayVisible(true);
 	return exitCode;
 }
