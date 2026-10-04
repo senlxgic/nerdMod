@@ -149,7 +149,39 @@ void uiInit() {
 
 // ---- top ---------------------------------------------------------------------------------------------
 u16 *uiTopPage(int page) { return topPages[page & 1]; }
-void uiTopShowPage(int page) { bgSetMapBase(3, (page & 1) ? 8 : 0); } // 8 * 16 KB = the second 128 KB bitmap
+namespace {
+int shownTopPage = 0; // which of the two bitmaps BG3 displays right now
+}
+void uiTopShowPage(int page) {
+	shownTopPage = page & 1;
+	bgSetMapBase(3, shownTopPage ? 8 : 0); // 8 * 16 KB = the second 128 KB bitmap
+}
+int uiTopShownPage() { return shownTopPage; }
+
+// Explicit graphics state for the Album and the video player: main engine MODE_5 with BG3 as a 16-bit bitmap
+// (VRAM A + B, two pages), sprites for the overlay, no blending, both pages black, page 0 visible. Nothing is
+// assumed about what the live preview left behind (shown page, BG3 transform, brightness is set by the caller).
+void uiTopViewerInit() {
+	vramSetBankA(VRAM_A_MAIN_BG_0x06000000);
+	vramSetBankB(VRAM_B_MAIN_BG_0x06020000);
+	REG_DISPCNT |= DISPLAY_BG3_ACTIVE | DISPLAY_SPR_ACTIVE;
+	bgInit(3, BgType_Bmp16, BgSize_B16_256x256, 0, 0); // identity transform, scroll 0, bitmap base 0
+	bgShow(3);
+	REG_BLDCNT = 0;
+	REG_BLDALPHA = 0;
+	uiTopClear();
+	uiTopShowPage(0);
+}
+
+// A frame that is one flat colour (all black or all white) is not a picture: sampled, so it is cheap
+bool uiTopPageLooksBlank(const u16 *page) {
+	const u16 first = page[0];
+	for (int i = 1; i < 256 * 192; i += 997) {
+		if (page[i] != first)
+			return false;
+	}
+	return true;
+}
 
 void uiTopClear() {
 	for (int i = 0; i < 2; i++)

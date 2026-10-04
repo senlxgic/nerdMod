@@ -59,7 +59,7 @@ PlayerExit playerRun(const std::string &path, const std::string &title) {
 	char total[16];
 	fmtTime(total, sizeof(total), duration);
 
-	int page = 0;
+	int page = uiTopShownPage(); // the page the Album left visible: frames go to the other one
 	bool playing = true;
 	bool atEnd = false;
 	u32 position = 0;		// playback position in ms (valid while paused)

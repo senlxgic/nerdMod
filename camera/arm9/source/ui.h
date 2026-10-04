@@ -23,6 +23,9 @@ void uiInit();
 // ---- top screen --------------------------------------------------------------------------------------
 u16 *uiTopPage(int page);
 void uiTopShowPage(int page);
+int uiTopShownPage();
+void uiTopViewerInit();
+bool uiTopPageLooksBlank(const u16 *page);
 void uiTopClear();
 void uiTopFlash();	// white flash (shutter)
 void uiTopFade(bool toWhite, int frames);

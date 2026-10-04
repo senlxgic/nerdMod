@@ -430,6 +430,7 @@ void cameraMode() {
 			if (!cameraActivate(cam))
 				fatalError("The camera did not start.");
 			uiTopClear();
+			front = uiTopShownPage();
 			uiTopSetCamera(cam == CAM_INNER);
 			uiTextClear();
 			showCameraButtons(videoMode, false);

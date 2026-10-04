@@ -78,6 +78,8 @@ Shown showItem(const MediaItem &m, u16 *scratch, int &page) {
 		clearTop(next);
 		s.line1 = m.video ? "Cannot show this video." : "Cannot show this photo.";
 		s.line2 = "(damaged or unsupported)";
+	} else if (!m.video && uiTopPageLooksBlank(dst)) {
+		s.line2 = "(the picture is flat/blank)"; // decoded, but one colour: say so rather than leave it unexplained
 	} else {
 		s.line2 = dateOf(m.name);
 	}
@@ -178,7 +180,11 @@ AlbumExit galleryRun() {
 	galleryList(items, MAX_ITEMS);
 
 	u16 *scratch = (u16 *)memalign(32, nvid::FRAME_BYTES);
-	int page = 0;
+	// The caller faded the top screen to white. Set the viewer's graphics state explicitly (it must not depend on what
+	// the live preview left behind), then fade in once the first picture is on its page.
+	uiTopViewerInit();
+	int page = uiTopShownPage();
+	bool fadedIn = false;
 	int index = (int)items.size() - 1; // newest first
 	bool redraw = true;
 	Shown shown;
@@ -213,6 +219,11 @@ AlbumExit galleryRun() {
 				uiTextCentred(6, shown.line2.c_str());
 				uiStatus(items[index].video ? "VIDEO" : "PHOTO");
 			}
+		}
+
+		if (!fadedIn) {
+			fadedIn = true;
+			uiTopFade(false, 4); // white -> picture (the screen used to stay white here)
 		}
 
 		scanKeys();
@@ -261,6 +272,7 @@ AlbumExit galleryRun() {
 					break;
 				}
 				uiTopOverlayVisible(false);
+				page = uiTopShownPage(); // the player flipped pages itself
 				redraw = true;
 			} else if (action == B_DELETE) {
 				const int c = confirmDelete(items[index]);
@@ -289,6 +301,7 @@ AlbumExit galleryRun() {
 
 	free(scratch);
 	uiClearButtons();
+	uiTopFade(true, 4); // back to white; the caller restores the preview and fades in
 	uiTopOverlayVisible(true);
 	return exitCode;
 }
