@@ -47,6 +47,7 @@
 #include "fontHandler.h"
 #include "graphics/ThemeTextures.h"
 #include "common/lodepng.h"
+#include "gameArt.h"
 #include "launchDots.h"
 #include "queueControl.h"
 #include "sound.h"
@@ -1687,6 +1688,7 @@ bool loadPhoto(const std::string &path, const bool bufferOnly) {
 		return true;
 	}
 
+	gameArt::forget(); // the frame is repainted below: any panel on it is gone
 	u16 *bgSubBuffer = tex().beginBgSubModify();
 	u16* bgSubBuffer2 = tex().bgSubBuffer2();
 
@@ -1832,6 +1834,7 @@ ITCM_CODE void drawCurrentTime() {
 
 void clearBoxArt() {
 	if (ms().macroMode) return;
+	gameArt::clear(); // nerdMod: the left game-art panel (restores the photo underneath)
 	tex().drawOverBoxArt(photoWidth, photoHeight);
 
 	extern uint boxArtWidth, boxArtHeight;

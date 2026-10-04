@@ -3,6 +3,7 @@
 #include "dirIndex.h"
 #include "gameLibrary.h"
 #include "virtualEntries.h"
+#include "graphics/gameArt.h"
 #include <algorithm>
 #include <dirent.h>
 #include <math.h>
@@ -130,6 +131,9 @@ std::string dirContName;
 
 char boxArtPath[256];
 const char* boxArtFilename;
+// nerdMod: the selected tile (path relative to the folder being browsed), for the left game-art panel
+static std::string tileSelectedPath;
+static bool tileSelectedIsApp = false;
 
 bool boxArtFound = false;
 bool boxArtLoaded = false;
@@ -672,6 +676,39 @@ void updateBoxArt(void) {
 	if (!boxArtFound) return;
 	showSTARTborder = true;
 	if (ms().theme == TWLSettings::EThemeHBL || ms().macroMode || !ms().showBoxArt || boxArtLoaded) return;
+
+	if (gameArt::enabled()) {
+		// nerdMod: the selected game's artwork goes to the left lane; the user's photo in the centre stays.
+		static int lastTile = -1, settle = 0;
+		const int tile = CURPOS + PAGENUM * 40;
+		if (tile != lastTile) {
+			lastTile = tile;
+			settle = 0;
+		}
+		if (isDirectory[CURPOS] || tileSelectedIsApp || tileSelectedPath.empty()) {
+			gameArt::clear(); // not a game: the lane stays in its normal state
+			boxArtLoaded = true;
+			return;
+		}
+		if (++settle < 12)
+			return; // wait for the cursor to rest (about 0.2 s) before reading any file
+		boxArtLoaded = true;
+		static const char *const labels[] = {"DS", "GBA", "GB", "GBC", "NES", "SMS", "GG", "MD", "SNES"};
+		const int type = bnrRomType[CURPOS];
+		const char *label = (type >= 0 && type <= 8) ? labels[type] : "";
+		std::string key = tileSelectedPath;
+		sprintf(boxArtPath, "%s:/_nds/TWiLightMenu/boxart/%s.png", sys().isRunFromSD() ? "sd" : "fat", boxArtFilename);
+		bool shownArt = pathMayExist(boxArtPath) && access(boxArtPath, F_OK) == 0 && gameArt::showBoxArtFile(key, boxArtPath);
+		if (!shownArt && type == 0) {
+			sprintf(boxArtPath, "%s:/_nds/TWiLightMenu/boxart/%s.png", sys().isRunFromSD() ? "sd" : "fat", gameTid[CURPOS]);
+			shownArt = pathMayExist(boxArtPath) && access(boxArtPath, F_OK) == 0 && gameArt::showBoxArtFile(key, boxArtPath);
+		}
+		if (!shownArt && type == 0)
+			shownArt = gameArt::showIcon(key, tileSelectedPath.c_str(), label); // the banner icon, enlarged
+		if (!shownArt)
+			gameArt::showPlaceholder(key, label);
+		return;
+	}
 
 	if (ms().theme != TWLSettings::ETheme3DS) {
 		clearBoxArt();
@@ -3560,6 +3597,8 @@ std::string browseForFile(const std::vector<std::string_view> extensionList) {
 				boxArtFound = ((CURPOS + PAGENUM * 40) < ((int)dirContents[scrn].size()));
 				if (boxArtFound) {
 					boxArtFilename = entryBaseName(dirContents[scrn].at(CURPOS + PAGENUM * 40).name);
+					tileSelectedPath = dirContents[scrn].at(CURPOS + PAGENUM * 40).name;
+					tileSelectedIsApp = dirContents[scrn].at(CURPOS + PAGENUM * 40).kind == ENTRY_BUILTIN;
 
 					logPrint("boxArtFilename: ");
 					logPrint(boxArtFilename);
