@@ -116,7 +116,6 @@ clean:
 	@rm -rf "$(PACKAGE)/_nds/TWiLightMenu/manual.srldr"
 	@rm -rf "$(PACKAGE)/Multimedia/_nds/TWiLightMenu/imageview.srldr"
 	@rm -rf "$(PACKAGE)/_nds/TWiLightMenu/camera.srldr"
-	@rm -rf "$(PACKAGE)/_nds/nerdMod/Camera/Camera.nds"
 	@rm -rf "$(PACKAGE)/_nds/TWiLightMenu/r4menu.srldr"
 	@rm -rf "$(PACKAGE)/_nds/TWiLightMenu/settings.srldr"
 	@rm -rf "$(PACKAGE)/_nds/TWiLightMenu/slot1launch.srldr"

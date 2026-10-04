@@ -256,6 +256,20 @@ jobs:
           enc() { sed -e 's/%/%25/g' -e 's/\r//g' | sed -e 's/$/%0A/' | tr -d '\n'; }
           SIZES=$(find 7zfile -type f \( -name '*.srldr' -o -name 'BOOT.NDS' \) -exec stat --printf='%s %n\n' {} \; 2>/dev/null | sort -k2 | enc)
           echo "::notice title=binary-sizes::${SIZES}"
+          # Camera app: compiler messages from its own files, and header facts that decide how
+          # it is launched (unit code, binary addresses, first ARM9 words).
+          if [ -f build.log ]; then
+            CAMW=$(grep -E '(^|/)camera/[^ ]*: *(warning|error)|photos\.cpp|aptina\.c' build.log | grep -E 'warning:|error:' | sed -E 's/^[^ ]*\/(camera\/[^ ]+): /\1: /' | sort | uniq -c | head -30 | enc)
+            echo "::notice title=camera-warnings::${CAMW:-none}"
+          fi
+          CAMF=7zfile/_nds/TWiLightMenu/camera.srldr
+          if [ -f "$CAMF" ]; then
+            rd32() { od -An -tx4 -j"$1" -N4 "$CAMF" | tr -d ' '; }
+            A9OFF=$(rd32 32)
+            A9FIRST=$(od -An -tx4 -j$((16#$A9OFF)) -N16 "$CAMF" | tr -s ' ')
+            CAMH="unitcode=$(od -An -tx1 -j18 -N1 "$CAMF" | tr -d ' ') gamecode=$(dd if="$CAMF" bs=1 skip=12 count=4 2>/dev/null) arm9off=0x$A9OFF arm9entry=0x$(rd32 36) arm9load=0x$(rd32 40) arm9size=0x$(rd32 44) arm7off=0x$(rd32 48) arm7entry=0x$(rd32 52) arm7load=0x$(rd32 56) arm7size=0x$(rd32 60) arm9first16=${A9FIRST}"
+            echo "::notice title=camera-header::${CAMH}"
+          fi
           echo "::notice title=build-stats::sha=${GITHUB_SHA} duration=${BUILD_SECONDS:-unknown}s warnings=${WARNING_COUNT:-unknown} errors=${ERROR_COUNT:-unknown}"
           if [ -f build.log ]; then
             WARNS=$(grep 'warning:' build.log | sed -E 's/^[^ ]*\/([^\/ ]+:[0-9]+:[0-9]+): /\1: /' | sort | uniq -c | sort -rn | head -25 | enc)

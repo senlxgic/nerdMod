@@ -26,9 +26,8 @@ makearm9:
 	cp arm9/$(TARGET).elf $(TARGET).arm9.elf
 
 dist:	all
-	@mkdir -p ../7zfile/debug ../7zfile/_nds/nerdMod/Camera
+	@mkdir -p ../7zfile/debug
 	@cp $(TARGET).nds ../7zfile/_nds/TWiLightMenu/camera.srldr
-	@cp $(TARGET).nds ../7zfile/_nds/nerdMod/Camera/Camera.nds
 	@cp $(TARGET).arm7.elf ../7zfile/debug/$(TARGET).arm7.elf
 	@cp $(TARGET).arm9.elf ../7zfile/debug/$(TARGET).arm9.elf
 
