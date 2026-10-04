@@ -4074,9 +4074,9 @@ std::string browseForFile(const std::vector<std::string_view> extensionList) {
 					}
 
 					// If SD card's cluster size is less than 32KB, then show warning for DS games with nds-bootstrap
-					extern struct statvfs st[2];
+					extern bool clusterSizeBelow32KB(int device);
 					if ((useBootstrapAnyway || isDSiWare[CURPOS]) && bnrRomType[CURPOS] == 0 && (!isDSiWare[CURPOS] || (ms().secondaryDevice && (!sdFound() || !ms().dsiWareToSD || bs().b4dsMode))) && isHomebrew[CURPOS] == 0
-					 && proceedToLaunch && st[ms().secondaryDevice].f_bsize < (32 << 10) && !ms().dontShowClusterWarning) {
+					 && proceedToLaunch && clusterSizeBelow32KB(ms().secondaryDevice) && !ms().dontShowClusterWarning) {
 						if (ms().theme == TWLSettings::EThemeSaturn) {
 							snd().playStartup();
 							fadeType = false; // Fade to black

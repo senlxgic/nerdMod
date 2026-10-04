@@ -140,7 +140,15 @@ int spawnedtitleboxes = 0;
 
 bool showColon = true;
 
-struct statvfs st[2];
+// Cluster size is only needed for the nds-bootstrap cluster warning, so it is
+// queried on demand instead of at every menu start (statvfs on FAT12/16 scans
+// the whole FAT). Same result as before: a failed query counts as "too small".
+bool clusterSizeBelow32KB(int device) {
+	struct statvfs st;
+	memset(&st, 0, sizeof(st));
+	statvfs(device ? "fat:/" : "sd:/", &st);
+	return st.f_bsize < (32 << 10);
+}
 bool gbaBiosFound[2] = {false};
 
 touchPosition touch;
@@ -1066,8 +1074,6 @@ int dsiMenuTheme(void) {
 	ms().gbaR3Test = (access(sys().isRunFromSD() ? "sd:/_nds/TWiLightMenu/emulators/GBARunner3.nds" : "fat:/_nds/TWiLightMenu/emulators/GBARunner3.nds", F_OK) == 0);
 
 	if (sdFound()) {
-		statvfs("sd:/", &st[0]);
-
 		gbaBiosFound[0] = (access("sd:/_gba/bios.bin", F_OK) == 0);
 		if (!ms().gbaR3Test) {
 			if (!gbaBiosFound[0]) gbaBiosFound[0] = (access("sd:/gba/bios.bin", F_OK) == 0);
@@ -1076,8 +1082,6 @@ int dsiMenuTheme(void) {
 		logPrint(gbaBiosFound[0] ? "GBA BIOS found on sd\n" : "GBA BIOS not found on sd\n");
 	}
 	if (flashcardFound()) {
-		statvfs("fat:/", &st[1]);
-
 		gbaBiosFound[1] = (access("fat:/_gba/bios.bin", F_OK) == 0);
 		if (!ms().gbaR3Test) {
 			if (!gbaBiosFound[1]) gbaBiosFound[1] = (access("fat:/gba/bios.bin", F_OK) == 0);
