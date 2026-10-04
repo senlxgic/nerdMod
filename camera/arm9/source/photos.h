@@ -20,6 +20,7 @@
 enum PhotoResult {
 	PHOTO_OK = 0,
 	PHOTO_NO_STORAGE,  // SD card / folder not available
+	PHOTO_NO_SPACE,    // the card ran out of space while writing (partial file removed)
 	PHOTO_WRITE_FAILED // out of space or write error (partial file is removed)
 };
 

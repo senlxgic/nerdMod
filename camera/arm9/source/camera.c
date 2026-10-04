@@ -30,9 +30,19 @@
 #define CAM_INIT_TIMEOUT 900
 #define CAM_CMD_TIMEOUT 300
 
+#define CLK_CAM_BITS (BIT(2) | BIT(8))
+
+// "Unknown": forces the next transfer to send an explicit mode command. Used after
+// every (re)activation, because we cannot assume which sensor context a camera
+// woke up in (e.g. a capture was the last thing it did before it was put to sleep).
+#define MODE_UNKNOWN ((CaptureMode)0)
+
 static Camera activeCamera = CAM_NONE;
-static CaptureMode activeMode = CAPTURE_MODE_PREVIEW;
+static CaptureMode activeMode = MODE_UNKNOWN;
 static bool cameraClocksOn = false;
+static u16 savedClkBits = 0;
+static u16 availableMask = 0;
+static CameraError lastError = CAM_ERR_NONE;
 
 static bool armCommand(u32 cmd, u32 timeoutFrames, u32 *reply) {
 	// Drop anything stale (e.g. a reply that arrived after an earlier timeout)
@@ -53,9 +63,31 @@ static bool armCommand(u32 cmd, u32 timeoutFrames, u32 *reply) {
 	return false;
 }
 
+bool cameraHardwareAccessible(void) {
+	const u32 need = BIT(31) | BIT(16) | BIT(17);
+	return (REG_SCFG_EXT & need) == need;
+}
+
+CameraError cameraLastError(void) { return lastError; }
+
+bool cameraAvailable(Camera cam) {
+	if (cam == CAM_INNER)
+		return (availableMask & NMCAM_INIT_INNER_OK) != 0;
+	if (cam == CAM_OUTER)
+		return (availableMask & NMCAM_INIT_OUTER_OK) != 0;
+	return false;
+}
+
 bool cameraInit(void) {
-	if (REG_SCFG_EXT == 0)
-		return false; // SCFG locked / not DSi hardware: camera registers are not reachable
+	lastError = CAM_ERR_NONE;
+	availableMask = 0;
+
+	if (!cameraHardwareAccessible()) {
+		lastError = CAM_ERR_NO_ACCESS; // refuse to touch registers that are not mapped
+		return false;
+	}
+
+	savedClkBits = REG_SCFG_CLK & CLK_CAM_BITS; // restored by cameraShutdown()
 
 	REG_SCFG_CLK |= BIT(2); // CamInterfaceClock = ON
 	cameraClocksOn = true;
@@ -83,8 +115,16 @@ bool cameraInit(void) {
 	swiDelay(0x14);
 
 	activeCamera = CAM_NONE;
-	activeMode = CAPTURE_MODE_PREVIEW;
-	return ok;
+	activeMode = MODE_UNKNOWN;
+
+	if (!ok) {
+		lastError = (reply & NMCAM_INIT_NO_ACCESS) ? CAM_ERR_NO_ACCESS : CAM_ERR_NO_SENSOR;
+		cameraShutdown(); // do not leave clocks running after a failed init
+		return false;
+	}
+
+	availableMask = (u16)(reply & (NMCAM_INIT_INNER_OK | NMCAM_INIT_OUTER_OK));
+	return true;
 }
 
 static void deactivate(Camera cam) {
@@ -104,8 +144,7 @@ bool cameraActivate(Camera cam) {
 		return false;
 
 	activeCamera = cam;
-	// A freshly woken sensor is in preview (context A) mode
-	activeMode = CAPTURE_MODE_PREVIEW;
+	activeMode = MODE_UNKNOWN; // the next transfer sets the sensor context explicitly
 	return true;
 }
 
@@ -124,6 +163,10 @@ bool cameraTransferStart(u16 *dst, CaptureMode mode) {
 	if (activeCamera == CAM_NONE)
 		return false;
 
+	// Never reprogram a running channel, and restart the interface cleanly
+	if ((NM_REG_NDMA1CNT & BIT(31)) || (NM_REG_CAM_CNT & BIT(15)))
+		cameraTransferStop();
+
 	const bool preview = (mode == CAPTURE_MODE_PREVIEW);
 
 	if (mode != activeMode) {
@@ -132,13 +175,12 @@ bool cameraTransferStart(u16 *dst, CaptureMode mode) {
 		activeMode = mode;
 	}
 
-	if (NM_REG_CAM_CNT & BIT(15))
-		cameraTransferStop();
-
 	const u32 bytes = preview ? (256 * 192 * 2) : CAM_CAPTURE_BYTES;
 	if ((u32)dst >= 0x02000000 && (u32)dst < 0x03000000) {
-		// The DMA writes behind the CPU's back; make sure no stale cache lines are left.
-		DC_InvalidateRange(dst, bytes);
+		// The DMA writes behind the CPU's back: write back anything dirty and drop all
+		// cache lines over the buffer (flush, not invalidate, so a buffer that is not
+		// line aligned cannot lose a neighbour's data).
+		DC_FlushRange(dst, bytes);
 	}
 
 	if (preview) // enable YUV-to-RGB555 and set "scanline count - 1" to 3
@@ -156,7 +198,10 @@ bool cameraTransferStart(u16 *dst, CaptureMode mode) {
 	return true;
 }
 
-void cameraTransferStop(void) { NM_REG_CAM_CNT &= ~BIT(15); }
+void cameraTransferStop(void) {
+	NM_REG_CAM_CNT &= ~BIT(15);   // camera interface: stop delivering data
+	NM_REG_NDMA1CNT &= ~BIT(31);  // NDMA channel 1: disable (it may still be armed)
+}
 
 bool cameraTransferActive(void) { return (NM_REG_NDMA1CNT & BIT(31)) != 0; }
 
@@ -165,11 +210,13 @@ void cameraShutdown(void) {
 		return;
 
 	cameraTransferStop();
-	NM_REG_NDMA1CNT &= ~BIT(31); // make sure the camera DMA is not running any more
 	cameraDeactivateActive();
 
+	NM_REG_CAM_CNT &= ~(BIT(15) | BIT(11) | BIT(10)); // no transfer, no camera IRQs left enabled
 	NM_REG_CAM_MCNT = 0;
-	REG_SCFG_CLK &= ~BIT(8); // CamExternal Clock = OFF
-	REG_SCFG_CLK &= ~BIT(2); // CamInterfaceClock = OFF
+
+	// Put the two camera clock bits back the way we found them
+	REG_SCFG_CLK = (REG_SCFG_CLK & ~CLK_CAM_BITS) | savedClkBits;
 	cameraClocksOn = false;
+	availableMask = 0;
 }

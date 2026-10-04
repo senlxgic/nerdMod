@@ -105,10 +105,17 @@ static u32 camReply(bool ok, u16 data) {
 static u32 camProcess(u32 cmd) {
 	switch (cmd) {
 		case NMCAM_CMD_INIT: {
-			const bool okInner = aptInit(NM_CAM_INNER);
-			const bool okOuter = aptInit(NM_CAM_OUTER);
-			const u16 id = aptReadChipId(NM_CAM_INNER);
-			return camReply(okInner && okOuter && id == 0x2280, id);
+			// The camera I2C bus is only reachable with an unlocked SCFG_EXT (DSi mode).
+			if (REG_SCFG_EXT == 0)
+				return camReply(false, NMCAM_INIT_NO_ACCESS);
+
+			u16 ready = 0;
+			// A sensor counts only if its init sequence completed AND it identifies itself.
+			if (aptInit(NM_CAM_INNER) && aptReadChipId(NM_CAM_INNER) == NMCAM_CHIP_ID)
+				ready |= NMCAM_INIT_INNER_OK;
+			if (aptInit(NM_CAM_OUTER) && aptReadChipId(NM_CAM_OUTER) == NMCAM_CHIP_ID)
+				ready |= NMCAM_INIT_OUTER_OK;
+			return camReply(ready != 0, ready);
 		}
 		case NMCAM_CMD_ACTIVATE_INNER:
 			camCurrentDevice = NM_CAM_INNER;

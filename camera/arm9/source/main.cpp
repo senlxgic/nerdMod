@@ -2,7 +2,7 @@
 	nerdMod Camera
 
 	A small Nintendo DSi camera application for nerdMod / TWiLight Menu++:
-	live preview from the inner or outer camera, photo capture to the SD card,
+	live preview from the inner or outer camera (I2C 0x7A / 0x78), photo capture to the SD card,
 	and a simple album. Launched like any other app from the menu; it returns
 	to the menu it was started from.
 
@@ -15,6 +15,7 @@
 
 #include <fat.h>
 #include <stdio.h>
+#include <malloc.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -148,17 +149,28 @@ void returnToMenu() {
 	setBrightness(3, 16); // fade to white
 	waitFrames(8);
 
+	// Same choice as the other TWiLight apps (see manual/arm9/source/main.cpp: loadROMselect)
+	const bool sd = sys().isRunFromSD();
 	const char *menu = nullptr;
 	switch (ms().theme) {
+		case TWLSettings::EThemeDSi:
+		case TWLSettings::EThemeHBL:
+		case TWLSettings::EThemeSaturn:
+			if (!ms().showSelectMenu) {
+				menu = sd ? "sd:/_nds/TWiLightMenu/mainmenu.srldr" : "fat:/_nds/TWiLightMenu/mainmenu.srldr";
+				break;
+			}
+			// fall through
+		case TWLSettings::ETheme3DS:
+		default:
+			menu = sd ? "sd:/_nds/TWiLightMenu/dsimenu.srldr" : "fat:/_nds/TWiLightMenu/dsimenu.srldr";
+			break;
 		case TWLSettings::EThemeR4:
 		case TWLSettings::EThemeGBC:
-			menu = sys().isRunFromSD() ? "sd:/_nds/TWiLightMenu/r4menu.srldr" : "fat:/_nds/TWiLightMenu/r4menu.srldr";
+			menu = sd ? "sd:/_nds/TWiLightMenu/r4menu.srldr" : "fat:/_nds/TWiLightMenu/r4menu.srldr";
 			break;
 		case TWLSettings::EThemeWood:
-			menu = sys().isRunFromSD() ? "sd:/_nds/TWiLightMenu/akmenu.srldr" : "fat:/_nds/TWiLightMenu/akmenu.srldr";
-			break;
-		default:
-			menu = sys().isRunFromSD() ? "sd:/_nds/TWiLightMenu/dsimenu.srldr" : "fat:/_nds/TWiLightMenu/dsimenu.srldr";
+			menu = sd ? "sd:/_nds/TWiLightMenu/mainmenu.srldr" : "fat:/_nds/TWiLightMenu/mainmenu.srldr";
 			break;
 	}
 
@@ -349,7 +361,7 @@ const Button btnBack = {17, 13, 14, 4, "BACK", "(B)"};
 void drawCameraScreen(Camera cam, const char *status) {
 	iprintf("\x1b[2J");
 	centred(1, "nerdMod Camera");
-	centred(3, cam == CAM_INNER ? "Camera: Inner (front)" : "Camera: Outer (rear)");
+	centred(3, cam == CAM_INNER ? "Camera: Inner" : "Camera: Outer");
 	if (status && status[0])
 		centred(5, status);
 	drawButton(btnShutter);
@@ -375,7 +387,7 @@ std::string takePhoto(Camera cam, int &frontPage) {
 		return "Camera busy, try again.";
 	cameraTransferStop();
 
-	u16 *yuv = (u16 *)malloc(CAM_CAPTURE_BYTES);
+	u16 *yuv = (u16 *)memalign(32, CAM_CAPTURE_BYTES); // 32-byte aligned, size is a multiple of 32
 	if (!yuv)
 		return "Out of memory.";
 
@@ -415,15 +427,18 @@ std::string takePhoto(Camera cam, int &frontPage) {
 // Runs the live camera until the user leaves. Returns true to keep the app running
 // (album was opened and closed) or false to exit.
 void cameraMode() {
-	Camera cam = CAM_OUTER;
+	// Start with the outer camera if it works, otherwise the inner one
+	Camera cam = cameraAvailable(CAM_OUTER) ? CAM_OUTER : CAM_INNER;
 	if (!cameraActivate(cam))
-		fatalError("The camera did not start.", "Close the lid, then retry.");
+		fatalError("The camera did not start.", "Leave and open Camera again.");
 
 	std::string status;
 	drawCameraScreen(cam, status.c_str());
 
 	int front = 0; // page currently shown
 	bool inFlight = false;
+	int framesInFlight = 0; // watchdog for a preview transfer that never completes
+	int stalls = 0;
 
 	while (!exitRequested) {
 		// ---- preview: double-buffered so the picture never tears
@@ -436,6 +451,14 @@ void cameraMode() {
 			if (!cameraTransferStart(previewPage[front ^ 1], CAPTURE_MODE_PREVIEW))
 				fatalError("The camera stopped responding.");
 			inFlight = true;
+			framesInFlight = 0;
+		} else if (++framesInFlight > 120) {
+			// A preview frame normally lands within a few vblanks. Abort, restart, and
+			// give up if it keeps happening.
+			cameraTransferStop();
+			inFlight = false;
+			if (++stalls >= 5)
+				fatalError("The camera stopped responding.", "(no image data)");
 		}
 
 		scanKeys();
@@ -518,7 +541,9 @@ int main(int argc, char **argv) {
 	if (sys().fatInitOk())
 		ms().loadSettings();
 
-	if (!dsiFeatures() || REG_SCFG_EXT == 0) {
+	if (!dsiFeatures() || !cameraHardwareAccessible()) {
+		// Not a DSi, or started in DS mode / with SCFG locked: the camera registers are
+		// not reachable, so do not touch them.
 		fatalError("This needs a Nintendo DSi", "running in DSi mode.");
 	}
 	if (!sys().fatInitOk()) {
@@ -529,7 +554,10 @@ int main(int argc, char **argv) {
 
 	centred(10, "Starting camera...");
 	if (!cameraInit()) {
-		fatalError("Camera hardware not found.", "(init failed)");
+		if (cameraLastError() == CAM_ERR_NO_ACCESS)
+			fatalError("This needs a Nintendo DSi", "running in DSi mode.");
+		else
+			fatalError("Camera hardware not found.", "(sensor did not answer)");
 	}
 
 	cameraMode();

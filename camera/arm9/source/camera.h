@@ -18,9 +18,25 @@ typedef enum {
 #define CAM_CAPTURE_HEIGHT 480
 #define CAM_CAPTURE_BYTES (CAM_CAPTURE_WIDTH * CAM_CAPTURE_HEIGHT * 2)
 
-// Powers up and initialises both camera sensors. Returns false if the camera
-// hardware did not answer (not a DSi, SCFG locked, sensor dead...).
+// Why cameraInit() failed (valid after it returned false).
+typedef enum {
+	CAM_ERR_NONE = 0,
+	CAM_ERR_NO_ACCESS, // not in DSi mode / SCFG_EXT does not expose NDMA + camera registers
+	CAM_ERR_NO_SENSOR  // the ARM7 could not bring up any sensor (I2C timeout, wrong chip id)
+} CameraError;
+
+// True if SCFG_EXT currently gives the ARM9 access to SCFG, NDMA and the camera
+// interface (bits 31, 16 and 17). Touches no camera hardware.
+bool cameraHardwareAccessible(void);
+
+// Powers up and initialises the camera sensors. Returns true if at least one
+// sensor is usable (see cameraAvailable); otherwise false and cameraLastError().
+// Nothing is touched unless cameraHardwareAccessible() is true.
 bool cameraInit(void);
+CameraError cameraLastError(void);
+
+// Whether a given sensor passed init (valid after a successful cameraInit()).
+bool cameraAvailable(Camera cam);
 
 // Activates a camera; the previously active one is deactivated first.
 bool cameraActivate(Camera cam);
@@ -32,12 +48,16 @@ Camera cameraActive(void);
 
 // Starts a transfer from the camera into dst using NDMA 1.
 // dst must be 4-byte aligned: VRAM for preview (256*192*2 bytes) or a buffer of
-// CAM_CAPTURE_BYTES for capture.
+// CAM_CAPTURE_BYTES for capture. A RAM buffer should be 32-byte aligned (the
+// data cache is flushed over it first, and an unaligned edge would also write
+// back / drop neighbouring data); main.cpp allocates it with memalign(32, ...).
 bool cameraTransferStart(u16 *dst, CaptureMode mode);
+// Stops the camera interface AND the NDMA channel (safe to call at any time).
 void cameraTransferStop(void);
 bool cameraTransferActive(void);
 
-// Stops everything and switches the camera clocks off again.
+// Stops everything, switches the sensors off and puts the camera clocks back to
+// the state they had before cameraInit().
 void cameraShutdown(void);
 
 #ifdef __cplusplus

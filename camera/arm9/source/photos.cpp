@@ -3,6 +3,7 @@
 #include "camera.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
@@ -105,6 +106,9 @@ PhotoResult photosSaveYuv(const u16 *yuv422, std::string &outName) {
 	putU32(header + 38, 2835); // 72 dpi
 	putU32(header + 42, 2835);
 
+	// (No free-space pre-check on purpose: statvfs() has to scan the whole FAT on a large
+	// card, which would stall every shot. A full card shows up as ENOSPC from the write.)
+	errno = 0;
 	bool ok = fwrite(header, 1, sizeof(header), f) == sizeof(header);
 
 	static u8 row[ROW_BYTES];
@@ -129,12 +133,16 @@ PhotoResult photosSaveYuv(const u16 *yuv422, std::string &outName) {
 		ok = fwrite(row, 1, ROW_BYTES, f) == (size_t)ROW_BYTES;
 	}
 
-	if (fclose(f) != 0)
+	int writeErrno = errno; // from the failing write, before fclose() can overwrite it
+	if (fclose(f) != 0) {
 		ok = false;
+		if (writeErrno == 0)
+			writeErrno = errno;
+	}
 
 	if (!ok) {
 		remove(path.c_str()); // never leave a truncated photo behind
-		return PHOTO_WRITE_FAILED;
+		return (writeErrno == ENOSPC) ? PHOTO_NO_SPACE : PHOTO_WRITE_FAILED;
 	}
 
 	outName = name;
