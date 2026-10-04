@@ -9,7 +9,7 @@ Status: **CI/static verified, NOT real-hardware verified.** Numbers marked (est.
 | 1 | Camera interface → RAM slot | NDMA channel 1 (hardware, RGB555 straight from the camera) | none |
 | 2 | RAM slot → top-screen VRAM page (preview) | `dmaCopyHalfWords` (DMA 3) | none while it runs; ≈3 ms bus time (est.) |
 | 3 | Effect (only when not NORMAL) | CPU, in place via a 32K-entry LUT | ≈ 49,152 lookups per frame (est. 6-8 ms); counted into drops |
-| 4 | Slot → libfat → SD | `write()` of header+frame in one call, 32-byte aligned slot (no bounce copy in libfat for aligned multi-sector writes) | SD driver time, dominant |
+| 4 | Slot → libfat → SD | `write()` of header+frame in one call, 32-byte aligned slot (libfat is expected to pass aligned multi-sector writes straight to the driver; not verified in this phase) | SD driver time, dominant |
 
 The recorder used to copy nothing on the CPU for NORMAL; that is unchanged. Two copies that *could* exist were removed or never added:
 no YUV→RGB conversion (the camera emits RGB555), and no memcpy into a write buffer (header and pixels share one slot).
@@ -26,7 +26,7 @@ skips (about 1 s) or 6 writes slower than 500 ms stop the recording cleanly ("SD
 
 One `write()` per main-loop iteration (a frame, or an audio chunk once 8 KB of audio is waiting; before video at 24 KB), each
 a multiple of 16 B and 32-byte aligned in RAM. Batching several frames in one write was considered and **not** done:
-libfat issues multi-sector SD commands inside a single write anyway (98 KB = 192 sectors in one go), so a bigger write
+libfat is expected to issue multi-sector SD commands inside a single write anyway (98 KB = 192 sectors in one go), so a bigger write
 saves little, while a 2-frame write would block capture twice as long. File pre-allocation was not done either: libfat
 offers no public preallocation API and growing the FAT chain is already done sequentially by the writes.
 
