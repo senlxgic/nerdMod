@@ -4,6 +4,7 @@
 #include "gameLibrary.h"
 #include "virtualEntries.h"
 #include "graphics/gameArt.h"
+#include "nmdiag.h"
 #include <algorithm>
 #include <dirent.h>
 #include <math.h>
@@ -3605,6 +3606,17 @@ std::string browseForFile(const std::vector<std::string_view> extensionList) {
 					logPrint("\n");
 				}
 				updateBoxArt();
+				if (nmdiag::noticeFramesLeft() > 0) {
+					// temporary: the photo diagnostic could not be written anywhere
+					printSmall(false, 4, 176, "Photo diagnostic write failed", Alignment::left, FontPalette::overlay);
+					updateText(false);
+					nmdiag::noticeTick();
+					if (nmdiag::noticeFramesLeft() == 0) {
+						clearText(false);
+						updateText(false);
+						bannerTextShown = false;
+					}
+				}
 				if (ms().theme < 4) {
 					while (dboxInFrame) {
 						bgOperations(true);
