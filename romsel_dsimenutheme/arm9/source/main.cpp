@@ -40,6 +40,7 @@
 #include "esrbSplash.h"
 #include "fileBrowse.h"
 #include "virtualEntries.h"
+#include "gameLibrary.h"
 #include "gbaswitch.h"
 #include "ndsheaderbanner.h"
 #include "perGameSettings.h"
@@ -1302,6 +1303,7 @@ int dsiMenuTheme(void) {
 		}
 
 		restoreLibraryHomeFolder(); // back to the folder the user was browsing after a flattened game was launched
+		gameLibraryEnterHome();	  // library views start at the device root, where every ROM root is combined
 		char path[256] = {0};
 		snprintf(path, sizeof(path), "%s", ms().romfolder[ms().secondaryDevice].c_str());
 		// Set directory

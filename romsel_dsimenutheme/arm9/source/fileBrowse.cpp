@@ -295,11 +295,11 @@ void getDirectoryContents(std::vector<DirEntry> &dirContents, const std::vector<
 	std::string cwdStr;
 	if (getcwd(cwdBuf, sizeof(cwdBuf)))
 		cwdStr = cwdBuf;
-	if (ms().gameLibraryView != TWLSettings::ELibraryFolders && !cwdStr.empty()
+	if (gameLibraryEffectiveView() != TWLSettings::ELibraryFolders && !cwdStr.empty()
 	 && gameLibraryCollect(cwdStr, extensionList, flattenedGames)) {
 		flattenActive = true;
 	}
-	const bool hideFolders = flattenActive && ms().gameLibraryView == TWLSettings::ELibraryAllGames;
+	const bool hideFolders = flattenActive && gameLibraryEffectiveView() == TWLSettings::ELibraryAllGames;
 
 	DIR *pdir = opendir(".");
 

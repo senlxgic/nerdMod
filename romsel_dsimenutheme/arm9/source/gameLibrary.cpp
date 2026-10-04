@@ -34,6 +34,12 @@ constexpr size_t CACHE_MAX_BYTES = 512 * 1024;
 
 const char *const ROOT_NAMES[] = {"roms", "games", "nds"};
 
+// Folders that people name "$NDS", "$SNES", ... at the top of the card to keep their ROM sets together. Only these
+// known names are treated as game roots (never every "$..." folder); each is probed with one stat(), nothing is listed.
+const char *const DOLLAR_ROOT_NAMES[] = {"$NDS",  "$DSI", "$DSIWARE", "$GBA", "$GB",  "$GBC", "$NES", "$FDS", "$SNES", "$SFC", "$SMS", "$GG",
+										 "$GEN",  "$MD",  "$A26",     "$A52", "$A78", "$COL", "$M5",  "$INT", "$MSX",  "$PCE", "$WS",  "$NGP",
+										 "$SG",   "$SC",  "$PLG",     "$XEX", "$ATR"};
+
 struct Game {
 	uint32_t off;  // into pool
 	uint16_t len;
@@ -130,6 +136,16 @@ bool isRootName(const std::string &n) {
 	return false;
 }
 
+bool isDollarRootName(const std::string &n) {
+	if (n.empty() || n[0] != '$')
+		return false;
+	for (const char *r : DOLLAR_ROOT_NAMES) {
+		if (strcasecmp(n.c_str(), r) == 0)
+			return true;
+	}
+	return false;
+}
+
 bool isDirectory(const std::string &p) {
 	struct stat st;
 	return stat(p.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
@@ -153,6 +169,11 @@ std::string defaultFolder(const std::string &dev) {
 void libraryRoots(const std::string &dev, std::vector<std::string> &roots) {
 	roots.clear();
 	for (const char *r : ROOT_NAMES) {
+		const std::string p = dev + "/" + r;
+		if (isDirectory(p))
+			roots.push_back(p);
+	}
+	for (const char *r : DOLLAR_ROOT_NAMES) {
 		const std::string p = dev + "/" + r;
 		if (isDirectory(p))
 			roots.push_back(p);
@@ -531,6 +552,8 @@ LibraryHomeKind gameLibraryHomeKind(const std::string &cwd) {
 		return LIB_HOME_MAIN; // device root
 	if (comps.size() == 1 && isRootName(comps[0]))
 		return LIB_HOME_MAIN;
+	if (comps.size() == 1 && isDollarRootName(comps[0]))
+		return LIB_HOME_FLATTEN; // a ROM-set folder such as $GBA: its sub-folders' games are listed in it too
 	if (comps.size() == 2 && strcasecmp(comps[0].c_str(), "roms") == 0)
 		return strcasecmp(comps[1].c_str(), "nds") == 0 ? LIB_HOME_MAIN : LIB_HOME_FLATTEN;
 	const std::string def = defaultFolder(dev);
@@ -575,4 +598,41 @@ void gameLibraryInvalidate() {
 
 size_t gameLibraryMemoryBytes() {
 	return lib.pool.capacity() + lib.games.capacity() * sizeof(Game) + lib.dirs.capacity() * sizeof(Dir);
+}
+
+// ---- home view ------------------------------------------------------------------------------
+
+namespace {
+bool browseSession = false;
+}
+
+void gameLibrarySetBrowse(bool browse) { browseSession = browse; }
+bool gameLibraryBrowsing() { return browseSession; }
+
+int gameLibraryEffectiveView() { return browseSession ? (int)TWLSettings::ELibraryFolders : (int)ms().gameLibraryView; }
+
+std::string gameLibraryDeviceRoot(const std::string &cwd) {
+	std::string dev;
+	std::vector<std::string> comps;
+	if (!splitPath(cwd, dev, comps))
+		return "";
+	return dev + "/";
+}
+
+bool gameLibraryEnterHome() {
+	if (gameLibraryEffectiveView() == (int)TWLSettings::ELibraryFolders)
+		return false;
+	const int idx = ms().secondaryDevice;
+	const std::string cur = ms().romfolder[idx];
+	if (cur.empty())
+		return false;
+	if (gameLibraryHomeKind(cur) == LIB_NOT_HOME)
+		return false; // a folder the user chose to be in: leave it
+	const std::string root = gameLibraryDeviceRoot(cur);
+	if (root.empty() || trimSlashes(root) == trimSlashes(cur))
+		return false;
+	ms().romfolder[idx] = root;
+	ms().pagenum[idx] = 0;
+	ms().cursorPosition[idx] = 0;
+	return true;
 }

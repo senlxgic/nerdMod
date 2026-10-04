@@ -43,4 +43,16 @@ void gameLibraryInvalidate();
 // Rough memory in use by the in-memory library, for the on-screen/log statistics.
 size_t gameLibraryMemoryBytes();
 
+// The library "home" for the current session. The home view (settings) shows games from the ROM roots
+// directly; "Browse Folders" (tile menu) switches this session back to plain folders without touching the setting.
+void gameLibrarySetBrowse(bool browse);
+bool gameLibraryBrowsing();
+// TWLSettings::TLibraryView value that applies right now (Folders while browsing).
+int gameLibraryEffectiveView();
+// "sd:/" for any path on the SD card, "fat:/" for the flashcard; empty if `cwd` has no device.
+std::string gameLibraryDeviceRoot(const std::string &cwd);
+// At menu start in a library view: when the saved folder is a library root / ROM-set folder (not a folder
+// the user went to on purpose), go to the device root, where all roots are combined. Returns true if it moved.
+bool gameLibraryEnterHome();
+
 #endif

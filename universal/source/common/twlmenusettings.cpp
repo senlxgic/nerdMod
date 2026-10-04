@@ -66,7 +66,7 @@ TWLSettings::TWLSettings()
 	//snesEmulator = true;
 	updateRecentlyPlayedList = true;
 	sortMethod = ESortAlphabetical;
-	gameLibraryView = ELibraryFolders;
+	gameLibraryView = ELibraryAllGames; // nerdMod: games are listed directly in the home area (folders stay reachable via Browse Folders)
 	libraryRefresh = false;
 	hideEmptyBoxes = false;
 	showDirectories = true;
@@ -263,8 +263,13 @@ void TWLSettings::loadSettings()
 	updateRecentlyPlayedList = settingsini.GetInt("SRLOADER", "UPDATE_RECENTLY_PLAYED_LIST", updateRecentlyPlayedList);
 	sortMethod = (TSortMethod)settingsini.GetInt("SRLOADER", "SORT_METHOD", sortMethod);
 	gameLibraryView = (TLibraryView)settingsini.GetInt("NERDMOD", "GAME_LIBRARY_VIEW", gameLibraryView);
+	if (settingsini.GetInt("NERDMOD", "GAME_LIBRARY_DEFAULT_VERSION", 0) < 1) {
+		// The default home view changed to "All Games" after the first library build wrote "Folders"; apply the new
+		// default once. The version is saved below, so a later choice of "Folders" in the settings is kept.
+		gameLibraryView = ELibraryAllGames;
+	}
 	if (gameLibraryView < ELibraryFolders || gameLibraryView > ELibraryMixed)
-		gameLibraryView = ELibraryFolders;
+		gameLibraryView = ELibraryAllGames;
 	libraryRefresh = settingsini.GetInt("NERDMOD", "LIBRARY_REFRESH", libraryRefresh);
 	libraryReturnHome[0] = settingsini.GetString("NERDMOD", "LIBRARY_RETURN_HOME", "");
 	libraryReturnHome[1] = settingsini.GetString("NERDMOD", "SECONDARY_LIBRARY_RETURN_HOME", "");
@@ -455,6 +460,7 @@ void TWLSettings::saveSettings()
 	settingsini.SetInt("SRLOADER", "UPDATE_RECENTLY_PLAYED_LIST", updateRecentlyPlayedList);
 	settingsini.SetInt("SRLOADER", "SORT_METHOD", sortMethod);
 	settingsini.SetInt("NERDMOD", "GAME_LIBRARY_VIEW", gameLibraryView);
+	settingsini.SetInt("NERDMOD", "GAME_LIBRARY_DEFAULT_VERSION", 1);
 	settingsini.SetInt("NERDMOD", "LIBRARY_REFRESH", libraryRefresh);
 	settingsini.SetString("NERDMOD", "LIBRARY_RETURN_HOME", libraryReturnHome[0]);
 	settingsini.SetString("NERDMOD", "SECONDARY_LIBRARY_RETURN_HOME", libraryReturnHome[1]);
