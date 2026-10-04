@@ -26,3 +26,10 @@ Games from the ROM roots are listed directly in the home area next to Camera: `/
 
 ## Camera effects
 NORMAL, MONO, SEPIA, NEGATIVE, COOL, WARM, POSTERIZE, HIGH CONTRAST, MIRROR. D-pad LEFT/RIGHT or a tap on the status bar changes the effect. The live preview and the saved photo carry it. Video supports NORMAL, MONO, SEPIA and NEGATIVE; switching to video drops any other effect.
+
+## Phase 2C additions
+* **Home photo folders.** Pictures are also read from `sd:/_nds/nerdMod/photos/home/`. A picture chosen with *Photos > Set as Home Photo* is stored as `sd:/_nds/nerdMod/home-photo.ini` (`PATH=`, `SERIAL=`) and is read first. `photo-status.txt` is written on every menu start (also when nothing is shown) and says why.
+* **Play Stats card (left of the photo).** Total play time, launches and games, from `sd:/_nds/nerdMod/playstats.ini`. Time is credited when the menu starts again after a game (RTC based; sessions over 12 h or with an unset/backwards clock count as 0). Switch: Settings > Home > Home Play Stats.
+* **Weather card (right of the photo).** Shows the cached reading, `--`, OFFLINE or SET PLACE. It never delays boot. No live update is possible in this build (see `docs/WEATHER.md`). Switches: Home Weather, Weather in Fahrenheit.
+* **Selected game caption.** Under the game art: launch count and play time.
+* The theme's `RenderPhoto` and "Show photo" still control the frame; the widgets only draw with it.
