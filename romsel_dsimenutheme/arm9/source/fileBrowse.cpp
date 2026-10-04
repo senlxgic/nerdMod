@@ -483,7 +483,7 @@ void displayNowLoading(void) {
 	showProgressIcon = true;
 }
 
-void moveCursor(bool right, const std::vector<DirEntry> dirContents, int maxEntry = 0xFFFF) {
+void moveCursor(bool right, const std::vector<DirEntry> &dirContents, int maxEntry = 0xFFFF) {
 	if ((right && CURPOS >= last_used_box) || (!right && CURPOS <= 0)) {
 		if (ms().theme != TWLSettings::EThemeSaturn && !edgeBumpSoundPlayed)
 			snd().playWrong();
@@ -2728,7 +2728,7 @@ bool selectMenu(void) {
 	return false;
 }
 
-void getFileInfo(SwitchState scrn, vector<vector<DirEntry>> dirContents, bool reSpawnBoxes) {
+void getFileInfo(SwitchState scrn, const vector<vector<DirEntry>> &dirContents, bool reSpawnBoxes) {
 	if (nowLoadingDisplaying) {
 		clearText();
 		showProgressBar = true;
@@ -2866,7 +2866,7 @@ void getFileInfo(SwitchState scrn, vector<vector<DirEntry>> dirContents, bool re
 	}
 }
 
-static bool previousPage(SwitchState scrn, vector<vector<DirEntry>> dirContents) {
+static bool previousPage(SwitchState scrn, const vector<vector<DirEntry>> &dirContents) {
 	if (CURPOS == 0 && !showLshoulder) {
 		snd().playWrong();
 		return false;
@@ -2937,7 +2937,7 @@ static bool previousPage(SwitchState scrn, vector<vector<DirEntry>> dirContents)
 	return showLshoulder;
 }
 
-static bool nextPage(SwitchState scrn, vector<vector<DirEntry>> dirContents) {
+static bool nextPage(SwitchState scrn, const vector<vector<DirEntry>> &dirContents) {
 	if (CURPOS == (file_count - 1) - PAGENUM * 40 && !showRshoulder) {
 		snd().playWrong();
 		return false;
