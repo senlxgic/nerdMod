@@ -42,6 +42,8 @@ class CIniFile
     std::string GetString(const std::string& Section,const std::string& Item,const std::string& DefaultValue);
     void SetString(const std::string& Section,const std::string& Item,const std::string& Value);
     int GetInt(const std::string& Section,const std::string& Item,int DefaultValue);
+    // Lookup only: returns 0 when missing and does not insert a default.
+    int GetInt(const std::string& Section,const std::string& Item);
     void SetInt(const std::string& Section,const std::string& Item,int Value);
     void GetStringVector(const std::string& Section,const std::string& Item,std::vector<std::string>& strings,char delimiter=',');
     void SetStringVector(const std::string& Section,const std::string& Item,std::vector<std::string>& strings,char delimiter=',');
@@ -62,7 +64,6 @@ class CIniFile
     std::string GetFileString(const std::string& Section,const std::string& Item);
 
     std::string GetString(const std::string& Section,const std::string& Item);
-    int GetInt(const std::string& Section,const std::string& Item);
 };
 
 #endif // _INIFILE_H_
