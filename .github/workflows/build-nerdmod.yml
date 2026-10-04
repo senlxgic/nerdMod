@@ -248,6 +248,22 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Publish results as annotations
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          enc() { sed -e 's/%/%25/g' -e 's/\r//g' | sed -e 's/$/%0A/' | tr -d '\n'; }
+          SIZES=$(find 7zfile -type f \( -name '*.srldr' -o -name 'BOOT.NDS' \) -exec stat --printf='%s %n\n' {} \; 2>/dev/null | sort -k2 | enc)
+          echo "::notice title=binary-sizes::${SIZES}"
+          echo "::notice title=build-stats::sha=${GITHUB_SHA} duration=${BUILD_SECONDS:-unknown}s warnings=${WARNING_COUNT:-unknown} errors=${ERROR_COUNT:-unknown}"
+          if [ -f build.log ]; then
+            WARNS=$(grep 'warning:' build.log | sed -E 's/^[^ ]*\/([^\/ ]+:[0-9]+:[0-9]+): /\1: /' | sort | uniq -c | sort -rn | head -25 | enc)
+            echo "::notice title=distinct-warnings::${WARNS}"
+            ERRS=$(grep -E 'error:|\*\*\* |Error [0-9]' build.log | head -25 | enc)
+            [ -n "$ERRS" ] && echo "::notice title=error-lines::${ERRS}"
+          fi
+
       - name: Upload nerdMod baseline
         if: success()
         uses: actions/upload-artifact@v4
