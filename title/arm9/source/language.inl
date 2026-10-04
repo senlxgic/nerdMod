@@ -3,7 +3,7 @@ STRING(CONSOLE_LID_CLOSED, "Was the console lid closed\nduring startup?")
 STRING(CONSOLE_LID_OPEN, "Is the console lid open?")
 
 // Settings reset
-STRING(RESET_TWILIGHT_SETTINGS, "Reset TWiLight Menu++ settings?")
+STRING(RESET_TWILIGHT_SETTINGS, "Reset nerdMod settings?")
 STRING(PGS_WILL_BE_KEPT, "Per-game settings will be kept.")
 STRING(A_YES, "\\A Yes")
 STRING(B_NO, "\\B No")

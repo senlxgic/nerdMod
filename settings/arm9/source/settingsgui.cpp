@@ -204,7 +204,7 @@ void SettingsGUI::draw()
 	// printSmall(false, 252, (scrollSections * (_selectedOption)) + CURSOR_MIN, "|");
 	// printSmall(false, 254, (scrollSections * (_selectedOption)) + CURSOR_MIN, "|");
 
-	printSmall(false, 0, 173, "TWiLight Menu++", Alignment::center);
+	printSmall(false, 0, 173, "nerdMod", Alignment::center);
 	printSmall(false, 2, 173, "<  / "); // L / Y
 	printSmall(false, 256 - 2, 173, " /  >", Alignment::right); // R / X
 
@@ -302,7 +302,7 @@ void SettingsGUI::drawSub()
 		}
 	}
 
-	printSmall(false, 0, 173, "TWiLight Menu++", Alignment::center);
+	printSmall(false, 0, 173, "nerdMod", Alignment::center);
 
 	updateText(false);
 	updateText(true);

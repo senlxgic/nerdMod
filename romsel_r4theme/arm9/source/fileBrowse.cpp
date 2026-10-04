@@ -739,7 +739,7 @@ bool cannotLaunchMsg(char tid1) {
 	} else if (bnrRomType == 1) {
 		printSmall(false, 0, 90, "GBA BIOS is missing!", Alignment::center);
 	} else {
-		printSmall(false, 0, 90, isTwlm ? "TWiLight Menu++ is already running." : "This game cannot be launched.", Alignment::center);
+		printSmall(false, 0, 90, isTwlm ? "nerdMod is already running." : "This game cannot be launched.", Alignment::center);
 	}
 	printSmall(false, 0, 108, " OK", Alignment::center);
 	updateText(false);
@@ -786,7 +786,7 @@ bool dsiWareInDSModeMsg(void) {
 	printSmall(false, 0, 102, "title in DS mode on a DSi or 3DS system.", Alignment::center);
 	printSmall(false, 0, 114, "For increased compatibility, and saving", Alignment::center);
 	printSmall(false, 0, 126, "data in more titles, please relaunch", Alignment::center);
-	printSmall(false, 0, 138, "TWLMenu++ from the console's SD Card slot.", Alignment::center);
+	printSmall(false, 0, 138, "nerdMod from the console's SD Card slot.", Alignment::center);
 	printSmall(false, 0, 154, " Return    Launch", Alignment::center);
 	updateText(false);
 

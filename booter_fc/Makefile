@@ -113,7 +113,7 @@ autoboot:
 	mv _DS_MENU.dat "../7zfile/Flashcard users/Autoboot/Ace3DS+/_DS_MENU.dat"
 	
 	##### Some carts require gamecode to be R4XX, but are still considered as Ace3DS+ clones
-	ndstool -c _DSMENU.nds -7 $(TARGET)_r4ils.arm7.elf -9 $(TARGET)_fc.arm9.elf -h 0x200 -g "####" "##" "R4XX" -b icon.bmp "TWiLight Menu++;Rocket Robz"
+	ndstool -c _DSMENU.nds -7 $(TARGET)_r4ils.arm7.elf -9 $(TARGET)_fc.arm9.elf -h 0x200 -g "####" "##" "R4XX" -b icon.bmp "nerdMod;Based on TWiLight Menu++"
 	dlditool flashcart_specifics/DLDI/acep.dldi _DSMENU.nds
 	r4denc -k 0x4002 _DSMENU.nds _DSMENU.dat
 	mv _DSMENU.dat "../7zfile/Flashcard users/Autoboot/Ace3DS+/_DSMENU.dat"
@@ -121,7 +121,7 @@ autoboot:
 	rm -f _DSMENU.nds
 	
 	#### Gateway Blue
-	ndstool -c _DSMENU.nds -7 $(TARGET)_r4ils.arm7.elf -9 $(TARGET)_fc.arm9.elf -h 0x200 -g "####" "##" "R4IT" -b icon.bmp "TWiLight Menu++;Rocket Robz"
+	ndstool -c _DSMENU.nds -7 $(TARGET)_r4ils.arm7.elf -9 $(TARGET)_fc.arm9.elf -h 0x200 -g "####" "##" "R4IT" -b icon.bmp "nerdMod;Based on TWiLight Menu++"
 	dlditool flashcart_specifics/DLDI/acep.dldi _DSMENU.nds
 	r4denc -k 0x4002 _DSMENU.nds _DSMENU.dat
 	mkdir -p "../7zfile/Flashcard users/Autoboot/Gateway Blue"
@@ -130,7 +130,7 @@ autoboot:
 	rm -f _DSMENU.nds
 	
 	#### SuperCard DSONE
-	ndstool -c SCFW.SC -7 $(TARGET)_fc.arm7.elf -9 $(TARGET)_fc.arm9.elf -h 0x200 -g "ENG0" -b icon.bmp "TWiLight Menu++;Rocket Robz"
+	ndstool -c SCFW.SC -7 $(TARGET)_fc.arm7.elf -9 $(TARGET)_fc.arm9.elf -h 0x200 -g "ENG0" -b icon.bmp "nerdMod;Based on TWiLight Menu++"
 	dlditool flashcart_specifics/DLDI/scds.dldi SCFW.SC
 	mkdir -p "../7zfile/Flashcard users/Autoboot/SuperCard DSONE/"
 	mv SCFW.SC "../7zfile/Flashcard users/Autoboot/SuperCard DSONE/SCFW.SC"
@@ -270,7 +270,7 @@ autoboot:
 	# R4i-SDHC has funny protection. Defeat it.
 	ndstool -x TTMenu.dat -9 arm9.bin
 	$(PYTHON) flashcart_specifics/r4isdhc/r4isdhc.py arm9.bin new9.bin
-	ndstool -c R4.dat -9 new9.bin -7 $(TARGET)_fc.arm7.elf -r9 0x02000000 -h 0x200 -b icon.bmp "TWiLight Menu++;Rocket Robz"
+	ndstool -c R4.dat -9 new9.bin -7 $(TARGET)_fc.arm7.elf -r9 0x02000000 -h 0x200 -b icon.bmp "nerdMod;Based on TWiLight Menu++"
 	rm -rf new9.bin arm9.bin arm7.bin banner.bin header.bin
 	mkdir -p "../7zfile/Flashcard users/Autoboot/R4i-SDHC/"
 	cp R4.dat "../7zfile/Flashcard users/Autoboot/R4i-SDHC/R4.dat"
@@ -294,13 +294,13 @@ autoboot:
 	mv _picoboot.nds "../7zfile/Flashcard users/Autoboot/DSpico/_picoboot.nds"
 
 $(TARGET).nds:	makearm7_fc makearm7_r4ils makearm9_fc makearm9_r4ig makearm9_acekard2 makearm9_r4idsn
-	ndstool -c $(TARGET)_fc.dsi       -7 $(TARGET)_r4ils.arm7.elf -9 $(TARGET)_fc.arm9.elf       -g SRLA 01 "TWLMENUPP" -b icon.bmp "TWiLight Menu++;Rocket Robz"
+	ndstool -c $(TARGET)_fc.dsi       -7 $(TARGET)_r4ils.arm7.elf -9 $(TARGET)_fc.arm9.elf       -g SRLA 01 "TWLMENUPP" -b icon.bmp "nerdMod;Based on TWiLight Menu++"
 	# simple nds srl without dsi extended header
-	ndstool -c $(TARGET)_fc.nds       -7 $(TARGET)_fc.arm7.elf    -9 $(TARGET)_fc.arm9.elf       -h 0x200 -b icon.bmp "TWiLight Menu++;Rocket Robz"
-	ndstool -c $(TARGET)_r4ig.nds     -7 $(TARGET)_fc.arm7.elf    -9 $(TARGET)_r4ig.arm9.elf     -h 0x200 -b icon.bmp "TWiLight Menu++;Rocket Robz"
-	ndstool -c $(TARGET)_r4idsn.nds   -7 $(TARGET)_fc.arm7.elf    -9 $(TARGET)_r4idsn.arm9.elf   -h 0x200 -b icon.bmp "TWiLight Menu++;Rocket Robz"
-	ndstool -c $(TARGET)_acekard2.nds -7 $(TARGET)_fc.arm7.elf    -9 $(TARGET)_acekard2.arm9.elf -h 0x200 -b icon.bmp "TWiLight Menu++;Rocket Robz"
-	ndstool -c $(TARGET)_r4ils.nds    -7 $(TARGET)_r4ils.arm7.elf -9 $(TARGET)_fc.arm9.elf       -h 0x200 -b icon.bmp "TWiLight Menu++;Rocket Robz"
+	ndstool -c $(TARGET)_fc.nds       -7 $(TARGET)_fc.arm7.elf    -9 $(TARGET)_fc.arm9.elf       -h 0x200 -b icon.bmp "nerdMod;Based on TWiLight Menu++"
+	ndstool -c $(TARGET)_r4ig.nds     -7 $(TARGET)_fc.arm7.elf    -9 $(TARGET)_r4ig.arm9.elf     -h 0x200 -b icon.bmp "nerdMod;Based on TWiLight Menu++"
+	ndstool -c $(TARGET)_r4idsn.nds   -7 $(TARGET)_fc.arm7.elf    -9 $(TARGET)_r4idsn.arm9.elf   -h 0x200 -b icon.bmp "nerdMod;Based on TWiLight Menu++"
+	ndstool -c $(TARGET)_acekard2.nds -7 $(TARGET)_fc.arm7.elf    -9 $(TARGET)_acekard2.arm9.elf -h 0x200 -b icon.bmp "nerdMod;Based on TWiLight Menu++"
+	ndstool -c $(TARGET)_r4ils.nds    -7 $(TARGET)_r4ils.arm7.elf -9 $(TARGET)_fc.arm9.elf       -h 0x200 -b icon.bmp "nerdMod;Based on TWiLight Menu++"
 	
 
 clean:

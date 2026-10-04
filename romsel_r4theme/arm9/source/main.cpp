@@ -1739,7 +1739,7 @@ int r4Theme(void) {
 						clearText(false);
 						printSmall(false, 0, 74, "Important!", Alignment::center, FontPalette::white);
 						printSmall(false, 0, 90, "After saving, please re-start", Alignment::center);
-						printSmall(false, 0, 102, "TWiLight Menu++ to transfer your", Alignment::center);
+						printSmall(false, 0, 102, "nerdMod to transfer your", Alignment::center);
 						printSmall(false, 0, 114, "save data back.", Alignment::center);
 						updateText(false);
 						for (int i = 0; i < 60*3; i++) swiWaitForVBlank();		// Wait 3 seconds

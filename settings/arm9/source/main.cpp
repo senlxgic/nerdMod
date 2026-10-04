@@ -1535,6 +1535,9 @@ int settingsMode(void)
 		.option(STR_PREVENT_ROM_DELETION, STR_DESCRIPTION_PREVENT_ROM_DELETION_1, Option::Bool(&ms().preventDeletion), {STR_YES, STR_NO}, {true, false})
 		.option(STR_UPDATE_RECENTLY_PLAYED_LIST, STR_DESCRIPTION_UPDATE_RECENTLY_PLAYED_LIST, Option::Bool(&ms().updateRecentlyPlayedList), {STR_YES, STR_NO}, {true, false});
 
+	// Credit line (the licences of TWiLight Menu++ and the other components stay with the source and the release)
+	miscPage.option(STR_ABOUT_NERDMOD, STR_DESCRIPTION_ABOUT_NERDMOD, Option::Nul(), {std::string("nerdMod")}, {0});
+
 	if (isDSiMode() && !sys().i2cBricked()) {
 		miscPage
 			.option(STR_WIFI,
@@ -1647,7 +1650,7 @@ int settingsMode(void)
 		// We are also using the changed callback to write
 		// or delete the hiya autoboot file.
 		miscPage
-			.option(STR_DEFAULT_LAUNCHER, STR_DESCRIPTION_DEFAULT_LAUNCHER_1, Option::Bool(&hiyaAutobootFound, opt_hiya_autoboot_toggle), {"TWiLight Menu++", STR_SYSTEM_MENU}, {true, false})
+			.option(STR_DEFAULT_LAUNCHER, STR_DESCRIPTION_DEFAULT_LAUNCHER_1, Option::Bool(&hiyaAutobootFound, opt_hiya_autoboot_toggle), {"nerdMod", STR_SYSTEM_MENU}, {true, false})
 			.option(STR_SYSTEMSETTINGS, STR_DESCRIPTION_SYSTEMSETTINGS_1, Option::Nul(opt_reboot_system_menu), {STR_PRESS_A}, {0});
 	}
 

@@ -113,7 +113,7 @@ void loadPageInfo(std::string pagePath) {
 
 	CIniFile pageIni(pagePath);
 
-	manPageTitle = pageIni.GetString("INFO","TITLE","TWiLight Menu++ Manual");
+	manPageTitle = pageIni.GetString("INFO","TITLE","nerdMod Manual");
 	/* toncset16(BG_PALETTE_SUB + 0xF6, pageIni.GetInt("INFO","BG_COLOR_1",0x6F7B), 1);
 	toncset16(BG_PALETTE_SUB + 0xF7, pageIni.GetInt("INFO","BG_COLOR_2",0x77BD), 1);
 	if (colorTable) {

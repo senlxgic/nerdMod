@@ -1,3 +1,19 @@
+# nerdMod
+
+**nerdMod** is a Nintendo DSi–focused launcher built on the TWiLight Menu++ framework, with a built-in Camera (photos and video), an optional all-games library view and a new visual identity.
+
+> nerdMod / Based on TWiLight Menu++ and other open-source components.
+
+nerdMod keeps the `/_nds/TWiLightMenu/` folder layout and the original licences, so existing themes, box art, cheats, per-game settings and nds-bootstrap setups keep working. Everything here is licensed as upstream (see `LICENSE`); the original authors' work is acknowledged in the project history and in the licence files of the bundled components.
+
+- Camera + video recording: [`camera/`](camera/), file format in [`docs/NERDVID.md`](docs/NERDVID.md), converter in [`tools/nerdvid-convert/`](tools/nerdvid-convert/)
+- Game library view (Folders / All Games / Mixed): Settings → GUI
+- Branding art generator: [`resources/branding/genbranding.py`](resources/branding/genbranding.py)
+
+---
+
+# Upstream README (TWiLight Menu++)
+
 <p align="center">
  <img src="https://github.com/DS-Homebrew/TWiLightMenu/blob/master/logo.png"><br>
   <a href="https://gbatemp.net/threads/ds-i-3ds-twilight-menu-gui-for-ds-i-games-and-ds-i-menu-replacement.472200/">

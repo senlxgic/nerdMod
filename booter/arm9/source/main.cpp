@@ -135,7 +135,7 @@ int main(int argc, char **argv) {
 		yPos += 8;
 		printSmall(false, 4, yPos, "insert the SD Card containing");
 		yPos += 8;
-		printSmall(false, 4, yPos, "TWiLight Menu++, then press A");
+		printSmall(false, 4, yPos, "nerdMod, then press A");
 		yPos += 8;
 		printSmall(false, 4, yPos, "to continue.");
 
@@ -224,7 +224,7 @@ int main(int argc, char **argv) {
 		yPos += 8;
 		printSmall(false, 4, yPos, "Please insert the SD card");
 		yPos += 8;
-		printSmall(false, 4, yPos, "containing TWiLight Menu++,");
+		printSmall(false, 4, yPos, "containing nerdMod,");
 		yPos += 8;
 		printSmall(false, 4, yPos, "then try again.");
 		yPos += 8*2;
@@ -338,11 +338,11 @@ int main(int argc, char **argv) {
 		clearText();
 		if (!twlmFound) {
 			int yPos = 4;
-			printSmall(false, 4, yPos, "The TWiLight Menu++ files are");
+			printSmall(false, 4, yPos, "The nerdMod files are");
 			yPos += 8;
 			printSmall(false, 4, yPos, "missing. In order to start");
 			yPos += 8;
-			printSmall(false, 4, yPos, "TWiLight Menu++, please add the");
+			printSmall(false, 4, yPos, "nerdMod, please add the");
 			yPos += 8;
 			printSmall(false, 4, yPos, "missing files.");
 			yPos += 8*2;
@@ -352,7 +352,7 @@ int main(int argc, char **argv) {
 			yPos += 8;
 			printSmall(false, 4, yPos, "the SD Card is formatted in a");
 			yPos += 8;
-			printSmall(false, 4, yPos, "way that TWiLight Menu++ cannot");
+			printSmall(false, 4, yPos, "way that nerdMod cannot");
 			yPos += 8;
 			printSmall(false, 4, yPos, "start. Please reformat your");
 			yPos += 8;

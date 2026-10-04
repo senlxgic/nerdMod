@@ -3190,7 +3190,7 @@ int titleMode(void)
 			for (int i = 0; i < 25; i++) {
 				swiWaitForVBlank();
 			}
-			logPrint("Opening TWLMenu++ Settings...\n");
+			logPrint("Opening nerdMod Settings...\n");
 
 			vector<char *> argarray;
 			argarray.push_back((char*)(sys().isRunFromSD() ? "sd:/_nds/TWiLightMenu/settings.srldr" : "fat:/_nds/TWiLightMenu/settings.srldr"));

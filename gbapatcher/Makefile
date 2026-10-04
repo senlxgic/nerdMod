@@ -34,7 +34,7 @@ dist:	all
 
 $(TARGET).nds:	makearm7 makearm9
 	ndstool	-u 00030004 -g HBLA -c $(TARGET).nds -7 $(TARGET).arm7.elf -9 $(TARGET).arm9.elf -d $(NITRODATA) \
-  -b icon.bmp "GBA patcher;TWiLight Menu++;RocketRobz"
+  -b icon.bmp "GBA patcher;nerdMod;Based on TWiLight Menu++"
 
 clean:
 	@echo clean ...
