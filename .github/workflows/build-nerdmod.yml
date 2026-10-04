@@ -256,11 +256,11 @@ jobs:
           enc() { sed -e 's/%/%25/g' -e 's/\r//g' | sed -e 's/$/%0A/' | tr -d '\n'; }
           SIZES=$(find 7zfile -type f \( -name '*.srldr' -o -name 'BOOT.NDS' \) -exec stat --printf='%s %n\n' {} \; 2>/dev/null | sort -k2 | enc)
           echo "::notice title=binary-sizes::${SIZES}"
-          # Toolchain probe (Phase 2C mic research): what the pinned libnds/calico headers say about the DSi microphone.
-          PROBE=$( { grep -rniE 'MICEX|MIC_?CNT|MIC_?DATA|SNDEX|I2S|TWL.?MIC' /opt/devkitpro/libnds/include /opt/devkitpro/calico/include 2>/dev/null | sed -E 's#/opt/devkitpro/##' | head -120; } | enc)
-          echo "::notice title=mic-probe::${PROBE:-none}"
-          PROBE2=$( { ls /opt/devkitpro/libnds/include/nds/arm7 /opt/devkitpro/libnds/include/nds/arm9 2>/dev/null | tr '\n' ' '; ls /opt/devkitpro 2>/dev/null | tr '\n' ' '; } | enc)
-          echo "::notice title=toolchain-dirs::${PROBE2:-none}"
+          # Toolchain probe (Phase 2C mic research): what the pinned libnds headers/libs say about the DSi codec and microphone.
+          PROBE=$( { cat /opt/devkitpro/libnds/include/nds/arm7/codec.h 2>/dev/null | grep -vE '^\s*$|^//|^/\*|^\s\*' | head -150; } | enc)
+          echo "::notice title=codec-probe::${PROBE:-none}"
+          PROBE2=$( { /opt/devkitpro/devkitARM/bin/arm-none-eabi-nm -C /opt/devkitpro/libnds/lib/libnds7.a 2>/dev/null | grep -iE ' [TtDdBb] .*(mic|cdc|codec|sndext|i2s)' | head -80; grep -nE 'mic|Mic' /opt/devkitpro/libnds/include/nds/arm9/sound.h | head -30; } | enc)
+          echo "::notice title=mic-symbols::${PROBE2:-none}"
           # Camera app: compiler messages from its own files, and header facts that decide how
           # it is launched (unit code, binary addresses, first ARM9 words).
           if [ -f build.log ]; then
