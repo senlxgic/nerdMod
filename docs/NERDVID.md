@@ -40,9 +40,19 @@ Chunk  = ChunkHeader (16 bytes) | payload (size bytes, always a multiple of 16)
 
 * `VFRM` — one frame, 256×192, 2 bytes/pixel, row-major, top row first. Pixel = `1BBBBBGGGGGRRRRR` (bit 15 set; ffmpeg name `bgr555le`).
 * `AUDI` — signed 16-bit little-endian PCM, mono, `audioRate` Hz. `timeMs` is the time of its first sample.
+* `PAD ` — filler (Phase 2C.1). `size` bytes of zeros that readers skip. It makes every recorder write start and end on a
+  512-byte (SD sector) boundary of the file.
 
 Video chunks are in time order; audio chunks are interleaved roughly every quarter second. A reader must ignore unknown
 chunk types (skip `size` bytes) and must stop quietly at a truncated or implausible chunk.
+
+### Sector-aligned layout (Phase 2C.1)
+
+Files written by Phase 2C.1 and later: the first 512 bytes are the 64-byte header plus one `PAD ` chunk; each video frame
+is `PAD`(480 bytes of filler) + `VFRM` + 98,304 bytes of pixels = 98,816 bytes (193 sectors); each audio block is `AUDI` +
+a `PAD ` chunk up to the next sector. The index points at the `VFRM` headers as before. Older files (chunks directly after
+the 64-byte header, no `PAD `) read exactly as before; a reader that does not know `PAD ` and stops at it still has
+the header and the index (`videoFrames`, `indexOffset`) but should be updated to skip it. The container version is still 1.
 
 ## Index
 
