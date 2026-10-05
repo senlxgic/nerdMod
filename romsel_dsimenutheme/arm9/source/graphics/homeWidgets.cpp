@@ -37,6 +37,13 @@ bool dirty = true;
 bool leftShown = false, rightShown = false;
 u32 leftSig = 0, rightSig = 0;
 
+// selected game (left card shows its stats instead of the global ones)
+bool selActive = false;
+char selName[96] = "";
+uint32_t selLaunches = 0, selSeconds = 0;
+int64_t selLast = 0;
+u32 selVersion = 0;
+
 // weather
 nmweather::Data wx;
 nmweather::Location place;
@@ -263,29 +270,84 @@ void upper(char *s) {
 }
 
 // ---- cards -------------------------------------------------------------------------------------------------
+// Splits "1h 32m" into "1H" / "32M"; "12 min" into "12" / "MIN"; "<1 min" into "<1" / "MIN".
+void splitTime(const char *t, char *a, size_t an, char *b, size_t bn) {
+	a[0] = b[0] = 0;
+	if (const char *sp = strchr(t, ' ')) {
+		snprintf(a, an, "%.*s", (int)(sp - t), t);
+		snprintf(b, bn, "%s", sp + 1);
+	} else {
+		snprintf(a, an, "%s", t);
+	}
+	upper(a);
+	upper(b);
+}
+
+u32 leftSignature() {
+	const playstats::Global &g = playstats::global();
+	if (selActive)
+		return selVersion * 2654435761u + selLaunches * 31u + selSeconds * 7u + (u32)(selLast / 3600) + 1u;
+	return g.totalSeconds * 31u + g.launches;
+}
+
+// Global card: "PLAY STATS", time played, launches. e.g. "1 min played / 30 launches", "1h 42m / 30 launches".
 void renderStatsCard(u16 *p, u32 &sig) {
 	const playstats::Global &g = playstats::global();
 	background(p, rgb(50, 150, 215), rgb(20, 70, 140));
 	centredText(p, 6, "PLAY", 1, SOFT);
 	centredText(p, 15, "STATS", 1, SOFT);
-	char t[24];
-	nmformat::duration(t, sizeof(t), g.totalSeconds);
-	char a[16] = "", b[16] = "";
-	if (const char *sp = strchr(t, ' ')) {
-		snprintf(a, sizeof(a), "%.*s", (int)(sp - t), t);
-		snprintf(b, sizeof(b), "%s", sp + 1);
+	char t[24], a[16], b[16];
+	nmformat::playTime(t, sizeof(t), g.totalSeconds);
+	splitTime(t, a, sizeof(a), b, sizeof(b));
+	const bool hours = strchr(t, 'h') != nullptr;
+	if (hours) {
+		centredText(p, 28, a, 2, WHITE); // "1H"
+		centredText(p, 44, b, 2, WHITE); // "32M"
+		snprintf(t, sizeof(t), "%lu", (unsigned long)g.launches);
+		centredText(p, 63, t, 1, WHITE);
+		centredText(p, 72, g.launches == 1 ? "LAUNCH" : "LAUNCHES", 1, DIM);
 	} else {
-		snprintf(a, sizeof(a), "%s", t);
+		centredText(p, 29, a, 2, WHITE); // "12" or "<1"
+		centredText(p, 45, b, 1, SOFT);	 // "MIN"
+		snprintf(t, sizeof(t), "%lu", (unsigned long)g.launches);
+		centredText(p, 59, t, 2, WHITE);
+		centredText(p, 75, g.launches == 1 ? "LAUNCH" : "LAUNCHES", 1, DIM);
 	}
-	upper(a);
-	upper(b);
-	centredText(p, 30, a, 2, WHITE);
-	if (b[0])
-		centredText(p, 46, b, 2, WHITE);
-	snprintf(t, sizeof(t), "%lu", (unsigned long)g.launches);
-	centredText(p, 64, t, 1, WHITE);
-	centredText(p, 73, g.launches == 1 ? "LAUNCH" : "LAUNCHES", 1, DIM);
-	sig = g.totalSeconds * 31u + g.launches;
+	sig = leftSignature();
+}
+
+// Selected game card: title, "Played N times", total time, last played.
+void renderGameCard(u16 *p, u32 &sig) {
+	background(p, rgb(50, 150, 215), rgb(20, 70, 140));
+	char lines[2][24];
+	const int n = nmformat::wrapTitle(selName, 8, 2, lines);
+	for (int i = 0; i < n; i++) {
+		upper(lines[i]);
+		centredText(p, 6 + i * 9, lines[i], 1, WHITE);
+	}
+	fillRect(p, 8, 26, CARD_W - 16, 1, rgb(150, 200, 235));
+	char t[24];
+	if (selLaunches == 0) {
+		centredText(p, 32, "NOT PLAYED", 1, SOFT);
+		centredText(p, 41, "YET", 1, SOFT);
+	} else {
+		centredText(p, 31, "PLAYED", 1, SOFT);
+		snprintf(t, sizeof(t), "%lu %s", (unsigned long)selLaunches, selLaunches == 1 ? "TIME" : "TIMES");
+		centredText(p, 40, t, 1, WHITE);
+		if (selSeconds > 0) {
+			nmformat::playTime(t, sizeof(t), selSeconds);
+			upper(t);
+			centredText(p, 53, t, 1, WHITE);
+		}
+		char day[24];
+		nmformat::lastPlayedDay(day, sizeof(day), selLast, (int64_t)time(NULL));
+		if (day[0]) {
+			centredText(p, 65, "LAST", 1, DIM);
+			upper(day);
+			centredText(p, 74, day, 1, WHITE);
+		}
+	}
+	sig = leftSignature();
 }
 
 u32 weatherSignature() {
@@ -346,7 +408,10 @@ bool layoutActive() { return gameArt::enabled(); }
 void drawLeft() {
 	static u16 card[PX];
 	u32 sig;
-	renderStatsCard(card, sig);
+	if (selActive)
+		renderGameCard(card, sig);
+	else
+		renderStatsCard(card, sig);
 	blit(card, LEFT_X);
 	leftShown = true;
 	leftSig = sig;
@@ -368,6 +433,21 @@ void invalidate() {
 	leftShown = rightShown = false;
 }
 
+void setSelectedGame(const char *name, uint32_t launches, uint32_t seconds, int64_t lastPlayed) {
+	snprintf(selName, sizeof(selName), "%s", name ? name : "");
+	selLaunches = launches;
+	selSeconds = seconds;
+	selLast = lastPlayed;
+	selVersion++;
+	selActive = true;
+}
+
+void clearSelectedGame() {
+	if (selActive)
+		selVersion++;
+	selActive = false;
+}
+
 void artCleared() {
 	leftShown = false;
 	dirty = true;
@@ -384,7 +464,8 @@ void tick() {
 
 	const bool wantLeft = ms().homePlayStats && !gameArt::visible();
 	const bool wantRight = ms().homeWeather;
-	if (!dirty && wantLeft == leftShown && wantRight == rightShown && (!rightShown || weatherSignature() == rightSig))
+	const bool leftStale = leftShown && wantLeft && leftSignature() != leftSig;
+	if (!dirty && !leftStale && wantLeft == leftShown && wantRight == rightShown && (!rightShown || weatherSignature() == rightSig))
 		return;
 	dirty = false;
 	// at most one card per call (each is a 4.5 KB blit); the next call finishes the job
@@ -393,7 +474,7 @@ void tick() {
 		dirty = true;
 		return;
 	}
-	if (wantLeft && !leftShown) {
+	if (wantLeft && (!leftShown || leftStale)) {
 		drawLeft();
 		return;
 	}

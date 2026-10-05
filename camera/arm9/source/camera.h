@@ -25,6 +25,10 @@ typedef enum {
 	CAM_ERR_NO_SENSOR  // the ARM7 could not bring up any sensor (I2C timeout, wrong chip id)
 } CameraError;
 
+// Sends one command word to the camera ARM7 service and waits (vblank units) for its reply word. Used by the
+// microphone capture (see camera_protocol.h). Returns true when the reply has the success bit.
+bool cameraRawCommand(u32 cmd, u32 timeoutFrames, u32 *reply);
+
 // True if SCFG_EXT currently gives the ARM9 access to SCFG, NDMA and the camera
 // interface (bits 31, 16 and 17). Touches no camera hardware.
 bool cameraHardwareAccessible(void);

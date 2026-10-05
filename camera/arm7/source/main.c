@@ -102,7 +102,11 @@ static u32 camReply(bool ok, u16 data) {
 	return (ok ? NMCAM_REPLY_OK : 0) | data;
 }
 
+u32 nmMicCommand(u32 cmd);
+
 static u32 camProcess(u32 cmd) {
+	if ((cmd & NMCAM_CMD_MIC_START_MASK) == NMCAM_CMD_MIC_START_BASE || cmd == NMCAM_CMD_MIC_STOP || cmd == NMCAM_CMD_MIC_STATUS)
+		return nmMicCommand(cmd);
 	switch (cmd) {
 		case NMCAM_CMD_INIT: {
 			// The camera I2C bus is only reachable with an unlocked SCFG_EXT (DSi mode).

@@ -467,6 +467,13 @@ Result stop(StopReason reason) {
 		L.audio_offset_binary = audioRec::wasOffsetBinary() ? 1 : 0;
 		L.audio_overrun_bytes = audioRec::overrunBytes();
 		L.audio_failed = r.hasAudio ? 0 : 1;
+		reclog::copyStr(L.mic_path, sizeof(L.mic_path), audioRec::pathName());
+		L.audio_in_rate = audioRec::inputRate();
+		L.audio_drains = audioRec::callbacks();
+		L.audio_fell_back = audioRec::usedFallback() ? 1 : 0;
+		// samples a continuous 16 kHz capture would have delivered in the recording time, and how far the real count is behind (ms)
+		L.audio_expected_samples = (u32)(((u64)L.duration_ms * audioRec::sampleRate()) / 1000u);
+		L.audio_drift_ms = L.audio_expected_samples > L.audio_samples ? (u32)(((u64)(L.audio_expected_samples - L.audio_samples) * 1000u) / audioRec::sampleRate()) : 0;
 		reclog::copyStr(L.mic_class, sizeof(L.mic_class), audiofmt::micClassName(audiofmt::classifyMic(audioStartOk ? audioRec::startStatus() : -1, audioRec::callbacks(), audioRec::peakSample())));
 		reclog::copyStr(L.stop_reason, sizeof(L.stop_reason), stopReasonName(r.reason));
 		reclog::copyStr(L.result, sizeof(L.result), frames ? "SAVING" : "NOTHING_RECORDED");

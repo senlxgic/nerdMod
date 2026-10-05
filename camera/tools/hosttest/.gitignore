@@ -11,3 +11,4 @@ test_photopolicy
 test_reclog
 test_weather
 test_sdbench
+test_resample

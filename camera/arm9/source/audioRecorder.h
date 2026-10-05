@@ -16,14 +16,16 @@ namespace audioRec {
 
 constexpr u32 SAMPLE_RATE = 16000;
 
-// Starts the microphone. Returns false if the ring could not be allocated or the ARM7 refused the request.
+// Starts the microphone: first the hardware-FIFO + NDMA capture on the camera ARM7 (no per-sample interrupts, see
+// camera/arm7/source/nmmic.c), and if that delivers no data within about a second, the libnds service.
+// Returns false if the ring could not be allocated or the ARM7 refused the request.
 bool start();
 // Stops the microphone and releases the buffers once the ring has been read out (call available()/read() first).
 void stop();
 void release();
 
 bool running();
-// Bytes waiting in the ring (always a multiple of 2).
+// Bytes waiting in the ring (always a multiple of 2). Also imports newly captured NDMA data: call it from the main loop.
 u32 available();
 // Copies up to maxBytes (rounded down to a multiple of 2) out of the ring.
 u32 read(u8 *dst, u32 maxBytes);
@@ -48,6 +50,8 @@ int meanSample();
 
 // Phase 2D: the sample rate the capture actually runs at, and which capture path is active ("libnds", "ndma", "none").
 u32 sampleRate();
-const char *pathName();
+const char *pathName();	// "ndma", "libnds", "libnds (fallback)" or "none" (of the last start)
+u32 inputRate();		// microphone rate before the conversion to 16 kHz (NDMA path), else 0
+bool usedFallback();	// the NDMA path delivered nothing and the libnds service was started instead
 
 } // namespace audioRec

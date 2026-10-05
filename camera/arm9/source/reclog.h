@@ -36,7 +36,7 @@ inline int bucketOf(uint32_t ms) {
 	X(buffer_peak) X(sd_write_count) X(sd_video_writes) X(sd_audio_writes) X(sd_total_write_ms) X(sd_avg_write_ms) \
 	X(sd_max_write_ms) X(sd_slow_writes_250ms) X(loop_iterations) X(rtc_seconds) X(aligned_writes) \
 	X(audio_init) X(audio_callbacks) X(audio_bytes) X(audio_samples) X(audio_chunks) X(audio_peak) X(audio_failed) \
-	X(audio_offset_binary) X(audio_overrun_bytes) X(h0) X(h1) X(h2) X(h3) X(h4) X(h5)
+	X(audio_offset_binary) X(audio_overrun_bytes) X(audio_in_rate) X(audio_drains) X(audio_fell_back) X(audio_drift_ms) X(audio_expected_samples) X(h0) X(h1) X(h2) X(h3) X(h4) X(h5)
 
 struct RecLog {
 #define X(n) uint32_t n = 0;
@@ -46,6 +46,7 @@ struct RecLog {
 	int32_t audio_min = 0, audio_max = 0, audio_mean = 0;
 	char recording_format[24] = "";
 	char mic_class[32] = "";
+	char mic_path[20] = "";	// "ndma", "libnds", "libnds (fallback)"
 	char stop_reason[24] = "";
 	char file[40] = "";
 	char result[24] = "";	// SAVED / NOT_SAVED / START_FAILED
@@ -103,6 +104,12 @@ inline size_t format(char *out, size_t cap, const RecLog &r) {
 	put("audio_offset_binary=%u\n", (unsigned)r.audio_offset_binary);
 	put("audio_overrun_bytes=%u\n", (unsigned)r.audio_overrun_bytes);
 	put("audio_failed=%u\n", (unsigned)r.audio_failed);
+	put("mic_path=%s\n", r.mic_path);
+	put("audio_in_rate=%u\n", (unsigned)r.audio_in_rate);
+	put("audio_drains=%u\n", (unsigned)r.audio_drains);
+	put("audio_fell_back=%u\n", (unsigned)r.audio_fell_back);
+	put("audio_expected_samples=%u\n", (unsigned)r.audio_expected_samples);
+	put("audio_drift_ms=%u\n", (unsigned)r.audio_drift_ms);
 	return n;
 }
 
@@ -143,6 +150,7 @@ inline bool parse(const char *text, RecLog &r) {
 				if (!hit && !strcmp(key, "audio_max")) { r.audio_max = (int32_t)strtol(val, nullptr, 10); hit = true; }
 				if (!hit && !strcmp(key, "audio_mean")) { r.audio_mean = (int32_t)strtol(val, nullptr, 10); hit = true; }
 				if (!hit && !strcmp(key, "recording_format")) { copyStr(r.recording_format, sizeof(r.recording_format), val); hit = true; }
+				if (!hit && !strcmp(key, "mic_path")) { copyStr(r.mic_path, sizeof(r.mic_path), val); hit = true; }
 				if (!hit && !strcmp(key, "mic_class")) { copyStr(r.mic_class, sizeof(r.mic_class), val); hit = true; }
 				if (!hit && !strcmp(key, "stop_reason")) { copyStr(r.stop_reason, sizeof(r.stop_reason), val); hit = true; }
 				if (!hit && !strcmp(key, "result")) { copyStr(r.result, sizeof(r.result), val); hit = true; }

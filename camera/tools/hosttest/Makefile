@@ -1,4 +1,4 @@
-test: test_container test_fps test_audio test_audiofmt test_bmpscale test_format test_font test_weather test_net test_photopolicy test_audioclass test_reclog test_sdbench
+test: test_container test_fps test_audio test_audiofmt test_bmpscale test_format test_font test_weather test_net test_photopolicy test_audioclass test_reclog test_sdbench test_resample
 	./test_container
 	./test_fps
 	./test_audio
@@ -12,6 +12,7 @@ test: test_container test_fps test_audio test_audiofmt test_bmpscale test_format
 	./test_audioclass
 	./test_reclog
 	./test_sdbench
+	./test_resample
 
 test_reclog: test_reclog.cpp ../../arm9/source/reclog.h
 	g++ -std=gnu++17 -O1 -g -Wall -Wextra -o $@ test_reclog.cpp
@@ -54,3 +55,6 @@ clean:
 
 test_sdbench: test_sdbench.cpp ../../arm9/source/sdbenchcalc.h
 	g++ -std=gnu++17 -O1 -g -Wall -Wextra -o $@ test_sdbench.cpp
+
+test_resample: test_resample.cpp ../../arm9/source/audioresample.h
+	g++ -std=gnu++17 -O1 -g -Wall -Wextra -o $@ test_resample.cpp -lm

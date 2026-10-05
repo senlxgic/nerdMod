@@ -21,6 +21,7 @@ int main() {
 	r.audio_peak = 1234; r.audio_min = -1200; r.audio_max = 1234; r.audio_mean = -3; r.audio_failed = 0;
 	snprintf(r.recording_format, sizeof r.recording_format, "NERDVID1-RGB555-A512");
 	snprintf(r.mic_class, sizeof r.mic_class, "MIC_VALID_DATA");
+	snprintf(r.mic_path, sizeof r.mic_path, "ndma"); r.audio_in_rate = 16364; r.audio_drains = 4000; r.audio_fell_back = 0; r.audio_expected_samples = 240000; r.audio_drift_ms = 12;
 	snprintf(r.stop_reason, sizeof r.stop_reason, "USER");
 	snprintf(r.result, sizeof r.result, "SAVED");
 	char buf[3000];
@@ -29,13 +30,14 @@ int main() {
 	// every required key is present
 	const char *keys[] = {"requested_fps=", "captured_frames=", "duration_ms=", "actual_fps=", "dropped_frames=", "camera_frames_seen=",
 		"buffer_slots=", "buffer_peak=", "sd_write_count=", "sd_bytes=", "sd_avg_write_ms=", "sd_max_write_ms=", "sd_effective_mb_s=",
-		"recording_format=", "audio_init=", "audio_samples=", "audio_chunks=", "audio_peak=", "audio_failed=", "stop_reason=", "mic_class=", "audio_callbacks="};
+		"recording_format=", "audio_init=", "audio_samples=", "audio_chunks=", "audio_peak=", "audio_failed=", "stop_reason=", "mic_class=", "audio_callbacks=", "mic_path=ndma", "audio_in_rate=16364", "audio_drains=4000", "audio_drift_ms=12", "audio_expected_samples=240000"};
 	for (const char *k : keys) { if (!strstr(buf, k)) { printf("missing key %s\n", k); failures++; } }
 	CHECK(strstr(buf, "actual_fps=1.67\n"));
 	CHECK(strstr(buf, "sd_max_write_ms=989\n"));
 	// round trip
 	reclog::RecLog b;
 	CHECK(reclog::parse(buf, b));
+	CHECK(!strcmp(b.mic_path, "ndma") && b.audio_in_rate == 16364 && b.audio_drift_ms == 12);
 	CHECK(b.requested_fps == 10 && b.captured_frames == 25 && b.sd_max_write_ms == 989 && b.sd_bytes == r.sd_bytes);
 	CHECK(b.audio_min == -1200 && b.audio_mean == -3 && !strcmp(b.mic_class, "MIC_VALID_DATA") && !strcmp(b.result, "SAVED"));
 	// a tiny buffer never overflows

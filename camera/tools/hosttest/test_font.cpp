@@ -4,7 +4,7 @@
 static int failures = 0;
 #define CHECK(c) do { if (!(c)) { printf("FAIL line %d: %s\n", __LINE__, #c); failures++; } } while (0)
 int main() {
-	for (const char *p = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 :.-/%+\xB0" "abcz"; *p; p++)
+	for (const char *p = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 :.-/%+\xB0" "abcz<>?,'"; *p; p++)
 		CHECK(nmfont::glyph(*p) != nullptr);
 	CHECK(nmfont::glyph('~') == nullptr);
 	// every letter/digit (except space) has at least one lit pixel and none beyond 5 columns

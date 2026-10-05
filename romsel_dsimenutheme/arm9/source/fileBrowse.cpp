@@ -682,51 +682,31 @@ void updateBoxArt(void) {
 	if (ms().theme == TWLSettings::EThemeHBL || ms().macroMode || !ms().showBoxArt || boxArtLoaded) return;
 
 	if (gameArt::enabled()) {
-		// nerdMod: the selected game's artwork goes to the left lane; the user's photo in the centre stays.
+		// nerdMod (Phase 2D): no artwork overlay any more. The LEFT card of the photo frame becomes the selected game's
+		// stats (title, played N times, total time, last played); the photo (centre) and the weather (right) stay.
 		static int lastTile = -1, settle = 0;
 		const int tile = CURPOS + PAGENUM * 40;
 		if (tile != lastTile) {
 			lastTile = tile;
 			settle = 0;
 		}
-		if (isDirectory[CURPOS] || tileSelectedIsApp || tileSelectedPath.empty()) {
-			gameArt::clear(); // not a game: the lane stays in its normal state
+		gameArt::clear(); // an old panel from before (no-op if nothing is shown)
+		if (isDirectory[CURPOS] || tileSelectedIsApp || tileSelectedPath.empty() || !ms().homePlayStats) {
+			homeWidgets::clearSelectedGame(); // not a game: the global Play Stats card
 			boxArtLoaded = true;
 			return;
 		}
-		if (++settle < 12)
-			return; // wait for the cursor to rest (about 0.2 s) before reading any file
+		if (++settle < 6)
+			return; // wait for the cursor to rest before looking anything up
 		boxArtLoaded = true;
-		static const char *const labels[] = {"DS", "GBA", "GB", "GBC", "NES", "SMS", "GG", "MD", "SNES"};
-		const int type = bnrRomType[CURPOS];
-		const char *label = (type >= 0 && type <= 8) ? labels[type] : "";
-		std::string key = tileSelectedPath;
-		{
-			// optional tiny "N plays / time" line from the already loaded play stats (no file access here)
-			const size_t slash = tileSelectedPath.rfind('/');
-			const playstats::Game pg = (ms().homePlayStats && slash != std::string::npos) ? playstats::game(tileSelectedPath.substr(0, slash + 1), tileSelectedPath.substr(slash + 1)) : playstats::Game();
-			if (pg.valid && pg.launches > 0) {
-				char l1[16], l2[16];
-				snprintf(l1, sizeof(l1), "%lu %s", (unsigned long)pg.launches, pg.launches == 1 ? "PLAY" : "PLAYS");
-				nmformat::duration(l2, sizeof(l2), pg.seconds);
-				for (char *c = l2; *c; c++)
-					if (*c >= 'a' && *c <= 'z')
-						*c = (char)(*c - 'a' + 'A');
-				gameArt::setCaption(l1, pg.seconds ? l2 : "");
-			} else {
-				gameArt::setCaption("", "");
-			}
-		}
-		sprintf(boxArtPath, "%s:/_nds/TWiLightMenu/boxart/%s.png", sys().isRunFromSD() ? "sd" : "fat", boxArtFilename);
-		bool shownArt = pathMayExist(boxArtPath) && access(boxArtPath, F_OK) == 0 && gameArt::showBoxArtFile(key, boxArtPath);
-		if (!shownArt && type == 0) {
-			sprintf(boxArtPath, "%s:/_nds/TWiLightMenu/boxart/%s.png", sys().isRunFromSD() ? "sd" : "fat", gameTid[CURPOS]);
-			shownArt = pathMayExist(boxArtPath) && access(boxArtPath, F_OK) == 0 && gameArt::showBoxArtFile(key, boxArtPath);
-		}
-		if (!shownArt && type == 0)
-			shownArt = gameArt::showIcon(key, tileSelectedPath.c_str(), label); // the banner icon, enlarged
-		if (!shownArt)
-			gameArt::showPlaceholder(key, label);
+		// Play stats are recorded under (current folder, entry name) at launch: look them up the same way.
+		char cwdBuf[PATH_MAX];
+		cwdBuf[0] = 0;
+		getcwd(cwdBuf, PATH_MAX);
+		const playstats::Game pg = playstats::game(cwdBuf, tileSelectedPath);
+		const size_t slash = tileSelectedPath.rfind('/');
+		const std::string title = slash == std::string::npos ? tileSelectedPath : tileSelectedPath.substr(slash + 1);
+		homeWidgets::setSelectedGame(title.c_str(), pg.launches, pg.seconds, pg.lastPlayed);
 		return;
 	}
 

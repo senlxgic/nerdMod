@@ -17,6 +17,12 @@ inline void start() {
 	TIMER_CR(2) = TIMER_ENABLE | TIMER_DIV_1024;
 }
 
+// Starts the clock only if it is not already running (does not disturb a running recording).
+inline void ensureStarted() {
+	if (!(TIMER_CR(3) & TIMER_ENABLE) || !(TIMER_CR(2) & TIMER_ENABLE))
+		start();
+}
+
 inline void stop() {
 	TIMER_CR(2) = 0;
 	TIMER_CR(3) = 0;

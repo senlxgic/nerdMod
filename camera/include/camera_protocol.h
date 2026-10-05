@@ -29,7 +29,20 @@ enum {
 	NMCAM_CMD_ACTIVATE_OUTER,
 	NMCAM_CMD_DEACTIVATE_OUTER,
 	NMCAM_CMD_MODE_PREVIEW,    // Sensor context A: 256x192
-	NMCAM_CMD_MODE_CAPTURE     // Sensor context B: 640x480
+	NMCAM_CMD_MODE_CAPTURE,    // Sensor context B: 640x480
+	NMCAM_CMD_MIC_STOP,        // Phase 2D: stop the hardware microphone capture (see nmmic.c)
+	NMCAM_CMD_MIC_STATUS       // reply data: MICCNT status bits (EMPTY/NOT_EMPTY/FULL/OVERRUN) in bits 0-3, 1 = ARM7 NDMA mic active in bit 4
 };
+
+// Phase 2D microphone capture without per-sample interrupts: the ARM7 enables the DSi microphone FIFO and an NDMA
+// channel (start mode "microphone") that copies it into a ring in main RAM owned by the ARM9, so SD transfers that
+// keep the ARM7 busy with interrupts masked can no longer starve the microphone.
+// NMCAM_CMD_MIC_START carries the ring address in the low 28 bits (address >> 5, ring 32-byte aligned).
+// Reply on success: bit 0 of the data = 1 when the codec runs at 47.6 kHz (microphone rate 23.8 kHz), else 32.7 kHz
+// (microphone rate 16.364 kHz).
+#define NMCAM_CMD_MIC_START_BASE 0x10000000u
+#define NMCAM_CMD_MIC_START_MASK 0xF0000000u
+#define NMMIC_RING_BYTES (128u * 1024u)
+#define NMMIC_SENTINEL 0xA5A5A5A5u
 
 #endif

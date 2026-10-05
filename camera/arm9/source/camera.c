@@ -63,6 +63,8 @@ static bool armCommand(u32 cmd, u32 timeoutFrames, u32 *reply) {
 	return false;
 }
 
+bool cameraRawCommand(u32 cmd, u32 timeoutFrames, u32 *reply) { return armCommand(cmd, timeoutFrames, reply); }
+
 bool cameraHardwareAccessible(void) {
 	const u32 need = BIT(31) | BIT(16) | BIT(17);
 	return (REG_SCFG_EXT & need) == need;
