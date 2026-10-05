@@ -29,7 +29,7 @@ dsimenu.srldr  (legacy devkitPro lane, no network code at all)           ──r
 ## Provider
 
 [Open-Meteo](https://open-meteo.com/): `geocoding-api.open-meteo.com/v1/search` (city search) and `api.open-meteo.com/v1/forecast`
-(current conditions, daily high/low, 5-day forecast). No API key; nothing secret is stored. Parsing is strict
+(current conditions, daily high/low, 7-day forecast). No API key; nothing secret is stored. Parsing is strict
 (`nmjson.h` + `nmweather.h`): bad JSON, NaN, out-of-range values or unknown weather codes are rejected, never invented.
 
 ## App
@@ -37,7 +37,7 @@ dsimenu.srldr  (legacy devkitPro lane, no network code at all)           ──r
 Top: condition illustration, city, temperature, condition. Bottom: today / tomorrow / next days and the buttons
 Change City, Refresh, Units (°C/°F), Auto refresh (on/off, interval 30 min / 1 h / 3 h / 6 h), Network Test, Back.
 Change City opens a touch keyboard, queries the geocoder and lists the results (name, region, country) to pick from; the choice stores
-name, latitude, longitude, country and timezone. Opening the app refreshes when the data is stale.
+name, latitude, longitude, country and timezone. Opening the app refreshes when Auto refresh is on and the data is stale; Refresh does it on demand.
 
 ## Files
 
