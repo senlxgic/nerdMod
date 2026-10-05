@@ -150,7 +150,7 @@ void blit(const u16 *panel) {
 } // namespace
 
 bool enabled() {
-	return ms().theme == TWLSettings::EThemeDSi && !ms().macroMode && ms().showPhoto && tc().renderPhoto();
+	return ms().theme == TWLSettings::EThemeDSi && tc().photoWanted();
 }
 
 bool visible() { return shown; }

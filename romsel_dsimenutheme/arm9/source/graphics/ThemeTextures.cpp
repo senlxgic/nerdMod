@@ -1145,7 +1145,7 @@ void ThemeTextures::drawOverBoxArt(uint photoWidth, uint photoHeight) {
 	uint boxArtY = (SCREEN_HEIGHT - boxArtHeight) / 2;
 
 	beginBgSubModify();
-	if (!ms().showPhoto || !tc().renderPhoto() || boxArtWidth > MAX_PHOTO_WIDTH || boxArtHeight > MAX_PHOTO_HEIGHT) {
+	if (!tc().photoWanted() || boxArtWidth > MAX_PHOTO_WIDTH || boxArtHeight > MAX_PHOTO_HEIGHT) {
 		if (!topBorderBufferLoaded) {
 			_backgroundTextures[0].copy(_topBorderBuffer, false);
 			topBorderBufferLoaded = true;
@@ -1159,7 +1159,7 @@ void ThemeTextures::drawOverBoxArt(uint photoWidth, uint photoHeight) {
 		}
 	}
 	
-	if (ms().showPhoto && tc().renderPhoto()) {
+	if (tc().photoWanted()) {
 		// fill black within boxart and photo bounds
 		uint blackX = boxArtX > PHOTO_OFFSET ? boxArtX : PHOTO_OFFSET;
 		uint blackY = boxArtY > PHOTO_OFFSET ? boxArtY : PHOTO_OFFSET;

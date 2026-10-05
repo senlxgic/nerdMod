@@ -2,8 +2,10 @@
 #include <string>
 #include "common/inifile.h"
 #include "common/singleton.h"
+#include "common/nmphoto.h"
 
 #pragma once
+#include "common/nmphoto.h"
 #ifndef _THEMECONFIG_H_
 #define _THEMECONFIG_H_
 
@@ -251,6 +253,9 @@ public:
 
 	bool purpleBatteryAvailable() const { return _purpleBatteryAvailable; }
 	bool renderPhoto() const { return _renderPhoto; }
+	// nerdMod: should the nerdMod home photo be drawn? Theme RenderPhoto=0 does not defeat an explicit Show Photo = ON.
+	nmphoto::Decision photoDecision() const;
+	bool photoWanted() const { return photoDecision().show; }
 	bool darkLoading() const { return _darkLoading; }
 	bool useAlphaBlend() const { return _useAlphaBlend; }
 

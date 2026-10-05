@@ -172,6 +172,29 @@ jobs:
             -exec stat --printf='%s bytes  %n\n' {} \; \
             | sort -k3
 
+      - name: Assert required apps are packaged
+        shell: bash
+        run: |
+          set -eu
+          missing=0
+          for f in \
+            "_nds/TWiLightMenu/camera.srldr" \
+            "_nds/TWiLightMenu/photos.srldr" \
+            "_nds/TWiLightMenu/dsimenu.srldr" \
+            "_nds/TWiLightMenu/settings.srldr"; do
+            if [ -s "7zfile/$f" ]; then
+              echo "PACKAGED $(stat --printf='%s' "7zfile/$f") bytes  $f"
+            else
+              echo "::error title=missing-app::$f is missing or empty in the final artifact"
+              missing=1
+            fi
+          done
+          grep -q '{"photos", "Photos", "photos.srldr"' romsel_dsimenutheme/arm9/source/virtualEntries.cpp \
+            || { echo "::error title=missing-registry::Photos is not in the built-in app registry"; missing=1; }
+          grep -q '{"camera", "Camera", "camera.srldr"' romsel_dsimenutheme/arm9/source/virtualEntries.cpp \
+            || { echo "::error title=missing-registry::Camera is not in the built-in app registry"; missing=1; }
+          if [ "$missing" != 0 ]; then exit 1; fi
+
       - name: Generate SHA-256 hashes
         shell: bash
         run: |
@@ -297,7 +320,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: nerdMod-phase2c-${{ env.SHORT_SHA }}
+          name: nerdMod-phase2c1-${{ env.SHORT_SHA }}
           path: |
             7zfile/
             SHA256SUMS.txt

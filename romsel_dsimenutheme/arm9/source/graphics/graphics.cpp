@@ -51,6 +51,8 @@
 #include "gameArt.h"
 #include "homeWidgets.h"
 #include "../nmdiag.h"
+#include "../virtualEntries.h"
+#include <sys/stat.h>
 #include "common/inifile.h"
 #include "launchDots.h"
 #include "queueControl.h"
@@ -1589,15 +1591,25 @@ bool loadPhotoList() {
 // Called once per menu start, always (also when the photo is off), so the diagnostic exists whatever happens.
 bool homePhotoInit() {
 	nmdiag::begin("nerdMod photo diagnostic");
-	nmdiag::add("device=%s\ntheme=%s\nmacroMode=%d showPhoto=%d themeRenderPhoto=%d boxArtColorDeband=%d\n", sys().isRunFromSD() ? "sd:" : "fat:", themeName(), (int)ms().macroMode, (int)ms().showPhoto, (int)tc().renderPhoto(), (int)boxArtColorDeband);
+	const nmphoto::Decision dec = tc().photoDecision();
+	nmdiag::add("device=%s\ntheme=%s\nmacroMode=%d\nshowPhotoSetting=%d\nthemeRenderPhoto=%d\nnerdModOverride=%d\nboxArtColorDeband=%d\npolicy=%s\n", sys().isRunFromSD() ? "sd:" : "fat:", themeName(), (int)ms().macroMode, (int)ms().showPhoto, (int)tc().renderPhoto(), (int)dec.overridden, (int)boxArtColorDeband, dec.result);
+	// Built-in app registry (Camera, Photos): what the home tiles are based on
+	for (int id = 0; id < builtInAppCount(); id++) {
+		const std::string ap = builtInAppPath(id);
+		struct stat ast;
+		const bool ex = stat(ap.c_str(), &ast) == 0;
+		nmdiag::add("app %s: path=%s exists=%d size=%ld available=%d\n", builtInApp(id).id, ap.c_str(), (int)ex, ex ? (long)ast.st_size : -1L, (int)builtInAppAvailable(id));
+	}
+	nmdiag::add("dsiFeatures=%d kiosk=%d consoleModel=%d\n", (int)dsiFeatures(), (int)ms().kioskMode, (int)ms().consoleModel);
 	nmdiag::flush(); // breadcrumb before anything below can go wrong
-	if (ms().macroMode || !ms().showPhoto || !tc().renderPhoto()) {
-		nmdiag::add("result=SKIPPED: %s\n", ms().macroMode ? "macro mode" : (!ms().showPhoto ? "Show Photo is off in Settings" : "the active theme has RenderPhoto=0"));
+	if (!dec.show) {
+		nmdiag::add("result=%s\n", dec.result);
 		nmdiag::flush();
 		return false;
 	}
 	srand(time(NULL));
 	const bool ok = loadPhotoList();
+	nmdiag::add("final=%s decode=%s\n", ok ? (dec.overridden ? "DISPLAYED_BY_NERDMOD_OVERRIDE" : "DISPLAYED") : "NOT_DISPLAYED", ok ? "ok" : "failed");
 	nmdiag::flush();
 	return ok;
 }

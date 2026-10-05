@@ -206,3 +206,9 @@ void ThemeConfig::loadConfig() {
 	_fontPaletteDateTime3 = getInt(themeConfig, "FontPaletteDateTime3", _fontPalette3);
 	_fontPaletteDateTime4 = getInt(themeConfig, "FontPaletteDateTime4", _fontPalette4);
 }
+
+nmphoto::Decision ThemeConfig::photoDecision() const {
+	// Saturn and HBL have no top-screen photo area at all
+	const bool canHost = ms().theme != TWLSettings::EThemeSaturn && ms().theme != TWLSettings::EThemeHBL;
+	return nmphoto::decide(ms().macroMode, ms().showPhoto, _renderPhoto, canHost);
+}
