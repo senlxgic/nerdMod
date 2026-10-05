@@ -9,10 +9,11 @@
 #include "msclock.h"
 #include "ui.h"
 #include "videoContainer.h"
+#include "videofmt.h"
 
 namespace {
 
-enum { B_PREV = 1, B_PLAY, B_NEXT, B_BACK };
+enum { B_PREV = 1, B_PLAY, B_NEXT, B_BACK, B_INFO };
 
 constexpr u32 SEEK_MS = 5000;
 constexpr u32 ABUF_BYTES = 32768; // largest audio chunk accepted
@@ -28,10 +29,11 @@ void drawButtons(bool playing, bool canPlay) {
 		{B_PREV, UI_RECT_PREV, UI_BTN_PREV, UI_BTN_PREV_P, true},
 		{B_PLAY, UI_RECT_PLAY, playing ? UI_BTN_PAUSE : (canPlay ? UI_BTN_PLAY : UI_BTN_PLAY_OFF), playing ? UI_BTN_PAUSE_P : UI_BTN_PLAY_P, canPlay},
 		{B_NEXT, UI_RECT_NEXT, UI_BTN_NEXT, UI_BTN_NEXT_P, true},
+		{B_INFO, UI_RECT_DELETE, UI_BTN_INFO, UI_BTN_INFO_P, true}, // the album's DELETE slot is unused in the player
 		{B_BACK, UI_RECT_BACK, UI_BTN_BACK, UI_BTN_BACK_P, true},
 	};
 	uiBottomDrawBackground();
-	uiShowButtons(list, 4);
+	uiShowButtons(list, 5);
 }
 
 } // namespace
@@ -139,6 +141,59 @@ PlayerExit playerRun(const std::string &path, const std::string &title) {
 		return true; // only audio so far: try again next iteration
 	};
 
+	// VIDEO INFO (X / SELECT / the INFO button): readable facts about the file and about this playback. Playback is paused.
+	auto showInfo = [&]() -> bool { // false = power exit requested
+		const nvid::Header &hd = reader.info();
+		const bool activeNow = audioPlay::active();
+		const u32 underruns = audioPlay::lateChunks();
+		if (playing) {
+			position = nowPos();
+			playing = false;
+			audioPlay::stop();
+			uiSetButtonImages(B_PLAY, UI_BTN_PLAY, UI_BTN_PLAY_P);
+		}
+		char line[7][32];
+		const u32 dur = duration;
+		snprintf(line[0], sizeof line[0], "Duration %u.%u sec", (unsigned)(dur / 1000), (unsigned)((dur % 1000) / 100));
+		snprintf(line[1], sizeof line[1], "%u frames %s %u FPS", (unsigned)reader.frameCount(), vfmt::formatTag(hd.videoFormat), (unsigned)(hd.fpsNum / (hd.fpsDen ? hd.fpsDen : 1)));
+		const u32 fileSamples = hd.audioBytes / 2;
+		const bool valid = reader.hasAudio() && fileSamples > 0 && !(hd.flags & nvid::FLAG_AUDIO_FAILED);
+		const u32 peak = audioPlay::peakFed();
+		snprintf(line[2], sizeof line[2], "Audio Valid: %s", !reader.hasAudio() ? "NO (none)" : !valid ? "NO (failed)" : (peak == 0 && audioPlay::chunksFed() > 8) ? "SILENT" : "YES");
+		snprintf(line[3], sizeof line[3], "Samples %u", (unsigned)fileSamples);
+		snprintf(line[4], sizeof line[4], "Peak %u (played so far)", (unsigned)peak);
+		snprintf(line[5], sizeof line[5], "Playback Active: %s", activeNow ? "YES" : "no");
+		snprintf(line[6], sizeof line[6], "Underruns %u", (unsigned)underruns);
+		uiClearButtons();
+		const UiButton ok[] = {{B_BACK, UI_RECT_BACK, UI_BTN_BACK, UI_BTN_BACK_P, true}};
+		uiTextClear();
+		uiBottomDrawBackground();
+		uiDrawDialogPanel();
+		uiShowButtons(ok, 1);
+		uiTextCentred(6, "Video info");
+		for (int i = 0; i < 7; i++)
+			uiTextAt(4, 8 + i, line[i]);
+		bool power = false;
+		while (true) {
+			scanKeys();
+			const u32 d = keysDown(), u = keysUp();
+			const int t = uiHandleInput(d, u);
+			uiTick();
+			if (appPowerExitRequested()) {
+				power = true;
+				break;
+			}
+			if ((d & (KEY_A | KEY_B | KEY_X | KEY_SELECT)) || t == B_BACK)
+				break;
+			swiWaitForVBlank();
+		}
+		uiTextClear();
+		drawButtons(false, true);
+		uiBarText(title.c_str());
+		updateText(position);
+		return !power;
+	};
+
 	uiTextClear();
 	drawButtons(true, true);
 	uiBarText(title.c_str());
@@ -173,11 +228,20 @@ PlayerExit playerRun(const std::string &path, const std::string &title) {
 			action = B_PREV;
 		else if (down & (KEY_RIGHT | KEY_R))
 			action = B_NEXT;
+		else if (down & (KEY_X | KEY_SELECT))
+			action = B_INFO;
 		if (action != touched && action > 0)
 			uiPressFeedback(action);
 
 		if (action == B_BACK)
 			break;
+		if (action == B_INFO) {
+			if (!showInfo()) {
+				exitCode = PlayerExit::PowerExit;
+				break;
+			}
+			continue;
+		}
 
 		if (action == B_PLAY) {
 			if (atEnd) {

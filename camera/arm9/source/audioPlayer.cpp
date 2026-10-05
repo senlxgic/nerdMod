@@ -25,6 +25,8 @@ u32 fed = 0;
 bool attempted = false;
 bool startedOk = false;
 bool toneMode = false;
+u32 fedSamples = 0;
+u32 fedPeak = 0;
 const char *errText = "ok";
 
 u32 consumed() { return s0 + msclock::toMs(msclock::ticks() - startTicks) * audioring::BYTES_PER_MS; }
@@ -96,6 +98,18 @@ void feed(u32 timeMs, const u8 *pcm, u32 bytes) {
 		return;
 	const audioring::Placement p = audioring::place(s0, consumed(), timeMs * audioring::BYTES_PER_MS, bytes, RING_BYTES, MARGIN);
 	fed++;
+	{
+		// what the file actually contains (also for chunks that arrive too late to play): sample count and peak
+		const int16_t *s = (const int16_t *)pcm;
+		const u32 n = bytes / 2;
+		for (u32 i = 0; i < n; i++) {
+			const int v = s[i];
+			const u32 a = (u32)(v < 0 ? -v : v);
+			if (a > fedPeak)
+				fedPeak = a;
+		}
+		fedSamples += n;
+	}
 	if (p.drop) {
 		late++;
 		return;
@@ -145,12 +159,15 @@ bool active() { return channel >= 0; }
 void resetStats() {
 	attempted = startedOk = false;
 	fed = late = 0;
+	fedSamples = fedPeak = 0;
 }
 u32 chunksFed() { return fed; }
 bool startAttempted() { return attempted; }
 bool startSucceeded() { return startedOk; }
 u32 positionMs() { return channel >= 0 ? (consumed() / audioring::BYTES_PER_MS) : 0; }
 u32 lateChunks() { return late; }
+u32 samplesFed() { return fedSamples; }
+u32 peakFed() { return fedPeak; }
 const char *lastError() { return errText; }
 int channelId() { return channel; }
 

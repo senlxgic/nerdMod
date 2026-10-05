@@ -33,6 +33,9 @@ void resetStats();
 u32 chunksFed();
 bool startAttempted();
 bool startSucceeded();
+// Phase 2D: statistics of what was fed to the ring since resetStats(): samples and the largest absolute sample (0 = silence).
+u32 samplesFed();
+u32 peakFed();
 // Phase 2D: why the last start()/startTone() failed ("ok" when it did not), and the hardware channel in use (-1 = none).
 const char *lastError();
 int channelId();

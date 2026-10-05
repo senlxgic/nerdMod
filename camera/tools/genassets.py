@@ -239,6 +239,11 @@ def glyph_gear(d, cx, cy, col, r=8.5):
     d.ellipse([S(cx - r), S(cy - r), S(cx + r), S(cy + r)], fill=col + (255,))
     d.ellipse([S(cx - r * 0.42), S(cy - r * 0.42), S(cx + r * 0.42), S(cy + r * 0.42)], fill=(255, 255, 255, 240))
 
+def glyph_info(d, cx, cy, col):
+    d.ellipse([S(cx - 11), S(cy - 11), S(cx + 11), S(cy + 11)], fill=col + (255,))
+    d.ellipse([S(cx - 2), S(cy - 7.5), S(cx + 2), S(cy - 3.5)], fill=(255, 255, 255, 245))
+    d.rounded_rectangle([S(cx - 2), S(cy - 1.5), S(cx + 2), S(cy + 7.5)], radius=S(1.2), fill=(255, 255, 255, 245))
+
 def glyph_camera(d, cx, cy, col, scale=1.0):
     k = scale
     d.rounded_rectangle([S(cx - 9 * k), S(cy - 5 * k), S(cx + 9 * k), S(cy + 7 * k)], radius=S(2.4 * k), fill=col + (255,))
@@ -697,6 +702,11 @@ def main():
     x, y, w, h = L["row"]
     for i in range(5):
         pack.add("ROW%d" % i, row_button(bg, x, y + 24 * i, w, h))
+
+    # Phase 2D: INFO button of the video player (same slot as the album's DELETE, which the player does not use)
+    x, y, w, h = L["delete"]
+    pack.add("BTN_INFO", square_button(bg, x, y, w, h, glyph_info, "INFO"))
+    pack.add("BTN_INFO_P", square_button(bg, x, y, w, h, glyph_info, "INFO", pressed=True))
 
     # ---- write bin + header
     blob = bytearray()

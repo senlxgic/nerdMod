@@ -58,6 +58,8 @@ enum UiId {
 	UI_ROW2 = 50,
 	UI_ROW3 = 51,
 	UI_ROW4 = 52,
+	UI_BTN_INFO = 53,
+	UI_BTN_INFO_P = 54,
 	UI_COUNT
 };
 
@@ -115,6 +117,8 @@ static const UiImage UI_IMAGES[UI_COUNT] = {
 	{243832, 216, 22}, // ROW2
 	{248584, 216, 22}, // ROW3
 	{253336, 216, 22}, // ROW4
+	{258088, 56, 62}, // BTN_INFO
+	{261560, 56, 62}, // BTN_INFO_P
 };
 
 // Bottom-screen layout (x, y, w, h)
