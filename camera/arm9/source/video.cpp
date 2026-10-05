@@ -9,6 +9,8 @@
 #include <unistd.h>
 
 #include "audioRecorder.h"
+#include "audiofmt.h"
+#include "reclog.h"
 #include "fpsutil.h"
 #include "common/systemdetails.h"
 #include "msclock.h"
@@ -19,9 +21,9 @@ namespace rec {
 namespace {
 
 // ---- buffers -------------------------------------------------------------------------------------
-// A slot is 16 bytes of padding, the 16-byte chunk header and the frame. Header + frame are written in one go.
-constexpr u32 SLOT_PAD = 16;
-constexpr u32 SLOT_BYTES = 32 + nvid::FRAME_BYTES; // 98336, a multiple of 32
+// A slot is the sector-aligned NERDVID unit (see videoContainer.h): PAD chunk, VFRM header, frame. The camera DMA
+// lands at slot + 512 and the whole slot (98816 bytes = 193 sectors) goes to the card in one write.
+constexpr u32 SLOT_BYTES = nvid::VIDEO_SLOT_BYTES;
 constexpr int SLOT_COUNT = 12;					   // maximum; 1 being captured + up to 11 waiting for the card (1.15 MB; 0.37 s at 30 fps)
 constexpr u32 AUDIO_CHUNK_MAX = 16384;
 constexpr u32 AUDIO_CHUNK_MIN = 8192;			   // write audio as soon as this much is waiting (0.25 s)
@@ -33,8 +35,7 @@ constexpr int MAX_SLOW_WRITES = 6;
 
 struct Slot {
 	u8 *base = nullptr;
-	u16 *pixels() const { return (u16 *)(base + 32); }
-	u8 *chunk() const { return base + SLOT_PAD; }
+	u16 *pixels() const { return (u16 *)(base + nvid::VIDEO_FRAME_OFFSET); }
 };
 
 Slot slots[SLOT_COUNT];
@@ -50,6 +51,7 @@ int shown = -1;			// slot that lastFrame() refers to (valid until the next frame
 
 u8 *audioChunk = nullptr;
 bool audioOn = false;
+bool audioStartOk = false; // the microphone start succeeded (kept after audioOn is cleared at the end)
 u32 audioPosBytes = 0;	// bytes of audio written so far (the time base of audio chunks)
 
 nvid::Writer writer;
@@ -63,6 +65,23 @@ int recFps = fpsutil::DEFAULT_FPS;
 u32 capturedCount = 0, storedCount = 0, bufferPeak = 0;
 u64 writeMsSum = 0;
 u32 writeCount = 0, writeMsMax = 0;
+u32 videoWrites = 0, audioWrites = 0, slow250 = 0, pumpCalls = 0;
+u64 bytesWritten = 0;
+u32 histogram[reclog::BUCKETS] = {0};
+u32 rtcStart = 0;
+reclog::RecLog lastLog;
+
+void noteWrite(u32 ms, u32 bytes, bool video) {
+	writeMsSum += ms;
+	writeCount++;
+	if (video) videoWrites++; else audioWrites++;
+	bytesWritten += bytes;
+	if (ms > writeMsMax)
+		writeMsMax = ms;
+	if (ms >= 250)
+		slow250++;
+	histogram[reclog::bucketOf(ms)]++;
+}
 
 u32 startTicks = 0;
 u32 nextIndex = 0;			// next frame slot (frame k is due at fpsutil::dueMs(k))
@@ -98,7 +117,7 @@ bool allocBuffers() {
 		freeBuffers();
 		return false;
 	}
-	audioChunk = (u8 *)memalign(32, 32 + AUDIO_CHUNK_MAX);
+	audioChunk = (u8 *)memalign(32, 32 + AUDIO_CHUNK_MAX + nvid::AUDIO_BLOCK_EXTRA);
 	if (!audioChunk) {
 		freeBuffers();
 		return false;
@@ -128,14 +147,11 @@ bool writeOneVideo() {
 	queueCount--;
 
 	const u32 before = msclock::ticks();
-	const bool ok = writer.writeVideo(slots[s].chunk(), nvid::FRAME_BYTES, t);
+	const bool ok = writer.writeVideoSlot(slots[s].base, t);
 	const u32 ms = msclock::toMs(msclock::ticks() - before);
 	if (ms > SLOW_WRITE_MS)
 		slowWrites++;
-	writeMsSum += ms;
-	writeCount++;
-	if (ms > writeMsMax)
-		writeMsMax = ms;
+	noteWrite(ms, SLOT_BYTES, true);
 	if (ok)
 		storedCount++;
 
@@ -146,15 +162,28 @@ bool writeOneVideo() {
 }
 
 bool writeOneAudio(u32 maxBytes) {
-	u8 *payload = audioChunk + 32;
+	u8 *payload = audioChunk + 16;
 	u32 n = audioRec::read(payload, maxBytes & ~15u); // multiples of 16 bytes keep the container aligned
 	if (!n)
 		return true;
-	const bool ok = writer.writeAudio(audioChunk + 16, n, audioPosBytes / 32);
+	const u32 before = msclock::ticks();
+	const bool ok = writer.writeAudioBlock(audioChunk, n, audioPosBytes / 32);
+	noteWrite(msclock::toMs(msclock::ticks() - before), n + 32, false);
 	audioPosBytes += n;
 	if (!ok)
 		noteWriteError();
 	return ok;
+}
+
+const char *stopReasonName(StopReason r) {
+	switch (r) {
+		case STOP_USER: return "USER";
+		case STOP_SD_FULL: return "SD_FULL";
+		case STOP_WRITE_ERROR: return "WRITE_ERROR";
+		case STOP_TOO_SLOW: return "TOO_SLOW";
+		case STOP_LIMIT: return "LIMIT";
+		default: return "NONE";
+	}
 }
 
 } // namespace
@@ -173,15 +202,46 @@ bool ensureVideoFolder() {
 
 bool active() { return recording; }
 
+const reclog::RecLog &lastRecLog() { return lastLog; }
+
+// Writes <videos>/last-recording.txt. Never fails loudly: the log is a diagnostic, not part of the recording.
+bool writeLogFile() {
+	char text[2600];
+	const size_t n = reclog::format(text, sizeof(text), lastLog);
+	mkdir((deviceRoot() + "/_nds").c_str(), 0777);
+	mkdir((deviceRoot() + "/_nds/nerdMod").c_str(), 0777);
+	mkdir(videoFolder().c_str(), 0777);
+	FILE *f = fopen((videoFolder() + "/last-recording.txt").c_str(), "wb");
+	if (!f)
+		return false;
+	const bool ok = fwrite(text, 1, n, f) == n;
+	return (fclose(f) == 0) && ok;
+}
+
+namespace {
+void failStart(const char *note, int requested) {
+	lastLog = reclog::RecLog();
+	reclog::copyStr(lastLog.result, sizeof(lastLog.result), "START_FAILED");
+	reclog::copyStr(lastLog.note, sizeof(lastLog.note), note);
+	reclog::copyStr(lastLog.stop_reason, sizeof(lastLog.stop_reason), "START_FAILED");
+	reclog::copyStr(lastLog.recording_format, sizeof(lastLog.recording_format), "NERDVID1-RGB555-A512");
+	lastLog.requested_fps = (u32)requested;
+	lastLog.rtc_seconds = 0;
+	writeLogFile();
+}
+} // namespace
+
 bool start(bool innerCamera, std::string &error) {
 	if (recording)
 		return true;
 	if (!sys().fatInitOk() || !ensureVideoFolder()) {
 		error = "No SD card";
+		failStart(error.c_str(), fps());
 		return false;
 	}
 	if (!allocBuffers()) {
 		error = "Out of memory";
+		failStart(error.c_str(), fps());
 		return false;
 	}
 
@@ -189,6 +249,7 @@ bool start(bool innerCamera, std::string &error) {
 	remove(tmpPath.c_str()); // a leftover from an interrupted recording
 
 	audioOn = audioRec::start();
+	audioStartOk = audioOn;
 
 	nvid::WriteParams params;
 	params.innerCamera = innerCamera;
@@ -199,6 +260,11 @@ bool start(bool innerCamera, std::string &error) {
 	params.startUnix = (u32)time(NULL);
 	if (!writer.open(tmpPath, params)) {
 		error = (writer.lastError() == ENOSPC) ? "SD card full" : "Cannot create file";
+		{
+			char note[48];
+			snprintf(note, sizeof(note), "%s (errno %d)", error.c_str(), writer.lastError());
+			failStart(note, recFps);
+		}
 		audioRec::release();
 		freeBuffers();
 		audioOn = false;
@@ -214,6 +280,11 @@ bool start(bool innerCamera, std::string &error) {
 	capturedCount = storedCount = bufferPeak = 0;
 	writeMsSum = 0;
 	writeCount = writeMsMax = 0;
+	videoWrites = audioWrites = slow250 = pumpCalls = 0;
+	bytesWritten = 0;
+	for (u32 &h : histogram)
+		h = 0;
+	rtcStart = (u32)time(NULL);
 	audioPosBytes = 0;
 	msclock::start();
 	startTicks = msclock::ticks();
@@ -289,6 +360,7 @@ void frameCaptured() {
 void pump() {
 	if (!recording || pending != STOP_NONE)
 		return;
+	pumpCalls++;
 
 	const u32 audioWaiting = audioOn ? audioRec::available() : 0;
 	bool ok = true;
@@ -357,8 +429,50 @@ Result stop(StopReason reason) {
 	r.avgWriteMs = writeCount ? (u32)(writeMsSum / writeCount) : 0;
 	r.bufferPeak = bufferPeak;
 
+	// ---- the persistent log (written for every recording, also for failed or empty ones)
+	{
+		reclog::RecLog &L = lastLog;
+		L = reclog::RecLog();
+		L.requested_fps = (u32)recFps;
+		L.captured_frames = frames;
+		L.duration_ms = endMs;
+		L.dropped_frames = fin.droppedFrames;
+		L.camera_frames_seen = capturedCount;
+		L.buffer_slots = (u32)slotN;
+		L.buffer_peak = bufferPeak;
+		L.sd_write_count = writeCount;
+		L.sd_video_writes = videoWrites;
+		L.sd_audio_writes = audioWrites;
+		L.sd_bytes = bytesWritten;
+		L.sd_total_write_ms = (u32)writeMsSum;
+		L.sd_avg_write_ms = r.avgWriteMs;
+		L.sd_max_write_ms = writeMsMax;
+		L.sd_slow_writes_250ms = slow250;
+		L.h0 = histogram[0]; L.h1 = histogram[1]; L.h2 = histogram[2]; L.h3 = histogram[3]; L.h4 = histogram[4]; L.h5 = histogram[5];
+		L.aligned_writes = writer.alignedWrites();
+		L.loop_iterations = pumpCalls;
+		L.rtc_seconds = (u32)time(NULL) - rtcStart;
+		reclog::copyStr(L.recording_format, sizeof(L.recording_format), "NERDVID1-RGB555-A512");
+		L.audio_init = (u32)(int32_t)audioRec::startStatus();
+		L.audio_callbacks = audioRec::callbacks();
+		L.audio_bytes = audioRec::totalDelivered();
+		L.audio_samples = audioRec::sampleCount();
+		L.audio_chunks = audioWrites;
+		L.audio_peak = audioRec::peakSample();
+		L.audio_min = audioRec::minSample();
+		L.audio_max = audioRec::maxSample();
+		L.audio_mean = audioRec::meanSample();
+		L.audio_offset_binary = audioRec::wasOffsetBinary() ? 1 : 0;
+		L.audio_overrun_bytes = audioRec::overrunBytes();
+		L.audio_failed = r.hasAudio ? 0 : 1;
+		reclog::copyStr(L.mic_class, sizeof(L.mic_class), audiofmt::micClassName(audiofmt::classifyMic(audioStartOk ? audioRec::startStatus() : -1, audioRec::callbacks(), audioRec::peakSample())));
+		reclog::copyStr(L.stop_reason, sizeof(L.stop_reason), stopReasonName(r.reason));
+		reclog::copyStr(L.result, sizeof(L.result), frames ? "SAVING" : "NOTHING_RECORDED");
+	}
+
 	if (frames == 0) {
 		remove(tmpPath.c_str()); // nothing worth keeping
+		writeLogFile();
 		return r;
 	}
 
@@ -382,10 +496,14 @@ Result stop(StopReason reason) {
 	if (rename(tmpPath.c_str(), (videoFolder() + "/" + name).c_str()) == 0) {
 		r.saved = true;
 		r.name = name;
+		reclog::copyStr(lastLog.result, sizeof(lastLog.result), "SAVED");
+		reclog::copyStr(lastLog.file, sizeof(lastLog.file), name.c_str());
 	} else {
+		reclog::copyStr(lastLog.result, sizeof(lastLog.result), "NOT_SAVED");
 		// keep the data under its temp name; the user will not see it in the album, but nothing is deleted
 		r.saved = false;
 	}
+	writeLogFile();
 	return r;
 }
 

@@ -30,6 +30,9 @@
 #include "camsettings.h"
 #include "fpsutil.h"
 #include "audioRecorder.h"
+#include "audioPlayer.h"
+#include "reclog.h"
+#include "sdbench.h"
 #include "gallery.h"
 #include "filters.h"
 #include "photos.h"
@@ -227,10 +230,40 @@ const char *fpsWord(int fps) {
 	}
 }
 
-// Full-screen dialog with two pages (A switches): 0 = last recording, 1 = camera diagnostics. B / OK closes.
+// The recording log of the last attempt: this session's, else what the previous session left on the card.
+reclog::RecLog viewLog() {
+	reclog::RecLog v = rec::lastRecLog();
+	if (v.result[0])
+		return v;
+	static char text[2600];
+	FILE *f = fopen((rec::videoFolder() + "/last-recording.txt").c_str(), "rb");
+	if (f) {
+		const size_t n = fread(text, 1, sizeof(text) - 1, f);
+		fclose(f);
+		text[n] = 0;
+		reclog::parse(text, v);
+	}
+	return v;
+}
+
+sdbench::Report benchReport;
+bool haveBench = false;
+
+void benchProgress(const char *name) {
+	char line[40];
+	uiTextAt(4, 12, "                       ");
+	snprintf(line, sizeof(line), "Testing %s...", name);
+	uiTextAt(4, 12, line);
+}
+
+// Full-screen dialog (A / D-pad switch pages, B closes). Pages: 0 last video, 1 SD card, 2 microphone, 3 tools
+// (X = SD speed test, Y = test tone), 4 SD speed test results. Everything shown is also in last-recording.txt.
 void showInfoDialog(int page) {
 	uiClearButtons();
 	const UiButton ok[] = {{B_OK, UI_RECT_BACK, UI_BTN_BACK, UI_BTN_BACK_P, true}};
+	reclog::RecLog v = viewLog();
+	const int pageCount = 5;
+	char toneLine[28] = "";
 	bool redraw = true;
 	while (!exitRequested) {
 		if (redraw) {
@@ -240,48 +273,76 @@ void showInfoDialog(int page) {
 			uiDrawDialogPanel();
 			uiShowButtons(ok, 1);
 			char line[40];
+			int row = 8;
+			auto put = [&](const char *fmt, auto... args) {
+				snprintf(line, sizeof(line), fmt, args...);
+				uiTextAt(4, row++, line);
+			};
+			const bool have = v.result[0] != 0;
+			const u32 afps = reclog::fpsX100(v.captured_frames, v.duration_ms);
 			if (page == 0) {
 				uiTextCentred(6, "Last video");
-				if (!haveLastRecording) {
+				if (!have) {
 					uiTextCentred(9, "No video yet");
 				} else {
-					const rec::Result &r = lastRecording;
-					snprintf(line, sizeof(line), "Requested: %d FPS", r.requestedFps);
-					uiTextAt(5, 8, line);
-					snprintf(line, sizeof(line), "Actual: %lu.%02lu FPS", (unsigned long)(r.avgFpsX100 / 100), (unsigned long)(r.avgFpsX100 % 100));
-					uiTextAt(5, 9, line);
-					snprintf(line, sizeof(line), "Dropped: %lu of %lu", (unsigned long)r.droppedFrames, (unsigned long)(r.frames + r.droppedFrames));
-					uiTextAt(5, 10, line);
-					snprintf(line, sizeof(line), "Max SD write: %lu ms", (unsigned long)r.maxWriteMs);
-					uiTextAt(5, 11, line);
-					uiTextAt(5, 12, r.hasAudio ? "Audio: OK" : "Audio: none");
+					put("Req %u  Act %u.%02u FPS", (unsigned)v.requested_fps, (unsigned)(afps / 100), (unsigned)(afps % 100));
+					put("Frames %u  Drop %u", (unsigned)v.captured_frames, (unsigned)v.dropped_frames);
+					put("Camera gave %u frames", (unsigned)v.camera_frames_seen);
+					put("Buffers %u of %u", (unsigned)v.buffer_peak, (unsigned)v.buffer_slots);
+					put("%u s  (clock %u s)", (unsigned)((v.duration_ms + 500) / 1000), (unsigned)v.rtc_seconds);
+					put("%s", v.result);
 				}
-			} else {
-				uiTextCentred(6, "Camera diagnostics");
-				const rec::Stats st = rec::stats();
-				const rec::Result &r = lastRecording;
-				snprintf(line, sizeof(line), "Target: %d FPS", rec::fps());
-				uiTextAt(5, 8, line);
-				if (haveLastRecording) {
-					const u32 capX = fpsutil::averageFpsX100(r.capturedFrames, r.durationMs);
-					snprintf(line, sizeof(line), "Camera: %lu.%02lu FPS", (unsigned long)(capX / 100), (unsigned long)(capX % 100));
-					uiTextAt(5, 9, line);
-					snprintf(line, sizeof(line), "Dropped: %lu", (unsigned long)r.droppedFrames);
-					uiTextAt(5, 10, line);
-					snprintf(line, sizeof(line), "SD avg/max: %lu/%lu ms", (unsigned long)r.avgWriteMs, (unsigned long)r.maxWriteMs);
-					uiTextAt(5, 11, line);
-					snprintf(line, sizeof(line), "Buffers: %lu of %d", (unsigned long)r.bufferPeak, rec::slotCount());
-					uiTextAt(5, 12, line);
-					if (r.hasAudio)
-						snprintf(line, sizeof(line), "Mic: Active, peak %lu", (unsigned long)audioRec::peakSample());
-					else
-						snprintf(line, sizeof(line), "No microphone data");
-					uiTextAt(5, 13, line);
+			} else if (page == 1) {
+				uiTextCentred(6, "SD card");
+				if (!have) {
+					uiTextCentred(9, "No video yet");
 				} else {
-					uiTextAt(5, 10, "Record a video first");
+					const u32 mbs = reclog::mbPerSecX100(v.sd_bytes, v.sd_total_write_ms);
+					put("Writes %u (V%u A%u)", (unsigned)v.sd_write_count, (unsigned)v.sd_video_writes, (unsigned)v.sd_audio_writes);
+					put("Avg %u ms   Max %u ms", (unsigned)v.sd_avg_write_ms, (unsigned)v.sd_max_write_ms);
+					put("Over 250 ms: %u", (unsigned)v.sd_slow_writes_250ms);
+					put("Speed %u.%02u MB/s", (unsigned)(mbs / 100), (unsigned)(mbs % 100));
+					put("Aligned %u of %u", (unsigned)v.aligned_writes, (unsigned)v.sd_write_count);
+					put("Stop: %s", v.stop_reason);
+				}
+			} else if (page == 2) {
+				uiTextCentred(6, "Microphone");
+				if (!have) {
+					uiTextCentred(9, "No video yet");
+				} else {
+					const char *cls = v.mic_class;
+					if (!strncmp(cls, "MIC_", 4))
+						cls += 4;
+					put("%s", cls);
+					put("Init %d  Calls %u", (int)v.audio_init, (unsigned)v.audio_callbacks);
+					put("Samples %u", (unsigned)v.audio_samples);
+					put("Peak %u  Mean %d", (unsigned)v.audio_peak, (int)v.audio_mean);
+					put("Chunks %u  Fail %u", (unsigned)v.audio_chunks, (unsigned)v.audio_failed);
+				}
+			} else if (page == 3) {
+				uiTextCentred(6, "Tools");
+				put("%s", "X: SD speed test");
+				put("%s", "Y: play test tone");
+				put("%s", "Log on the card:");
+				put("%s", "videos/last-recording.txt");
+				if (toneLine[0])
+					put("%s", toneLine);
+			} else {
+				uiTextCentred(6, "SD speed test");
+				if (!haveBench) {
+					uiTextCentred(9, "Press X on Tools");
+				} else {
+					for (int i = 0; i < benchReport.count; i++) {
+						const sdbench::Row &r = benchReport.rows[i];
+						const u32 m = sdbench::mbPerSecX100(r);
+						put("%s %u.%02uMB/s mx%u", r.name, (unsigned)(m / 100), (unsigned)(m % 100), (unsigned)r.maxMs);
+					}
+					put("sd-benchmark.txt saved");
 				}
 			}
-			uiTextAt(5, 14, page == 0 ? "A: diagnostics" : "A: last video");
+			char foot[32];
+			snprintf(foot, sizeof(foot), "A: page %d/%d", page + 1, pageCount);
+			uiTextAt(4, 15, foot);
 		}
 		scanKeys();
 		const u32 down = keysDown(), up = keysUp();
@@ -289,8 +350,46 @@ void showInfoDialog(int page) {
 		uiTick();
 		if ((down & KEY_B) || touched == B_OK || appPowerExitRequested())
 			break;
-		if (down & KEY_A) {
-			page ^= 1;
+		if (down & (KEY_A | KEY_RIGHT)) {
+			page = (page + 1) % pageCount;
+			redraw = true;
+		} else if (down & KEY_LEFT) {
+			page = (page + pageCount - 1) % pageCount;
+			redraw = true;
+		} else if ((down & KEY_X) && !rec::active()) {
+			page = 3;
+			uiTextClear();
+			uiBottomDrawBackground();
+			uiDrawDialogPanel();
+			uiTextCentred(6, "SD speed test");
+			uiTextCentred(9, "Please wait...");
+			sdbench::run(benchReport, benchProgress);
+			haveBench = true;
+			page = 4;
+			redraw = true;
+		} else if (down & KEY_Y) {
+			if (audioPlay::startTone()) {
+				snprintf(toneLine, sizeof(toneLine), "Tone: playing...");
+				page = 3;
+				redraw = true;
+				for (int i = 0; i < 90 && !exitRequested; i++) {
+					if (i == 1) {
+						// redraw now that the tone started
+						uiTextClear();
+						uiBottomDrawBackground();
+						uiDrawDialogPanel();
+						uiTextCentred(6, "Tools");
+						uiTextCentred(9, "Playing 1 kHz test tone");
+						uiTextCentred(11, "Do you hear a beep?");
+					}
+					swiWaitForVBlank();
+				}
+				audioPlay::stop();
+				snprintf(toneLine, sizeof(toneLine), "Tone: played (heard?)");
+			} else {
+				snprintf(toneLine, sizeof(toneLine), "Tone: channel FAILED");
+			}
+			page = 3;
 			redraw = true;
 		}
 		swiWaitForVBlank();
@@ -501,7 +600,7 @@ void cameraMode() {
 				waitTransferIdle(30);
 				cameraTransferStop();
 				inFlight = false;
-				showInfoDialog(1);
+				showInfoDialog(0);
 				restoreCameraScreen();
 			}
 		}

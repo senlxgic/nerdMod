@@ -39,5 +39,11 @@ bool gotData();
 u32 peakSample();
 bool wasOffsetBinary();
 int startStatus();
+// Phase 2C.1 telemetry: number of callbacks, samples stored, and their range / mean after the sign fix.
+u32 callbacks();
+u32 sampleCount();
+int minSample();
+int maxSample();
+int meanSample();
 
 } // namespace audioRec

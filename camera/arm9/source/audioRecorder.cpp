@@ -21,39 +21,56 @@ volatile u32 overrun = 0;
 volatile bool anyData = false;
 volatile bool active = false;
 volatile bool offsetBinary = false;
-volatile u32 peakLevel = 0;
+volatile u32 callbackCount = 0;
+audiofmt::Stats stats;
 int startResult = 0;
 
-// Runs when the ARM7 has filled (part of) the microphone buffer. Keep it short: invalidate, copy, bump an index.
+// Runs when the ARM7 has filled (part of) the microphone buffer. Keep it short: invalidate, convert while copying, bump an index.
+// The shared buffer is only READ here: writing into it from the ARM9 would leave dirty cache lines that could later overwrite
+// fresh samples written by the ARM7.
 void micCallback(void *completedBuffer, int length) {
 	if (!active || !ring || length <= 0)
 		return;
 	u32 bytes = (u32)length & ~1u;
 	DC_InvalidateRange(completedBuffer, (u32)length);
+	callbackCount++;
 	delivered += bytes;
 	anyData = true;
 
-	// Make the block signed PCM16 whichever way the codec path delivered it (see audiofmt.h).
-	int16_t *samples = (int16_t *)completedBuffer;
+	const int16_t *src = (const int16_t *)completedBuffer;
 	const u32 count = bytes / 2;
-	if (!offsetBinary && audiofmt::looksOffsetBinary(samples, count))
+	// libnds delivers the sample either signed or offset binary depending on the path (see audiofmt.h)
+	if (!offsetBinary && audiofmt::looksOffsetBinary(src, count))
 		offsetBinary = true;
-	if (offsetBinary)
-		audiofmt::flipToSigned(samples, count);
-	const u32 pk = audiofmt::peak(samples, count);
-	if (pk > peakLevel)
-		peakLevel = pk;
 
 	const u32 used = ringHead - ringTail;
 	if (used + bytes > RING_BYTES) {
 		overrun += bytes; // the writer is too far behind: drop this block rather than overwrite unread data
 		return;
 	}
-	const u32 pos = ringHead % RING_BYTES;
-	const u32 first = (pos + bytes <= RING_BYTES) ? bytes : RING_BYTES - pos;
-	memcpy(ring + pos, completedBuffer, first);
-	if (first < bytes)
-		memcpy(ring, (const u8 *)completedBuffer + first, bytes - first);
+	int16_t *dst = (int16_t *)ring;
+	u32 idx = (ringHead % RING_BYTES) / 2;
+	const u32 ringSamples = RING_BYTES / 2;
+	const u16 flip = offsetBinary ? 0x8000u : 0u;
+	int32_t mn = stats.minV, mx = stats.maxV;
+	int64_t sum = 0;
+	uint32_t pk = stats.peakAbs;
+	for (u32 i = 0; i < count; i++) {
+		const int16_t v = (int16_t)((u16)src[i] ^ flip);
+		dst[idx] = v;
+		if (++idx == ringSamples)
+			idx = 0;
+		if (v < mn) mn = v;
+		if (v > mx) mx = v;
+		sum += v;
+		const uint32_t a = (uint32_t)(v < 0 ? -(int32_t)v : (int32_t)v);
+		if (a > pk) pk = a;
+	}
+	stats.minV = mn;
+	stats.maxV = mx;
+	stats.sum += sum;
+	stats.peakAbs = pk;
+	stats.samples += count;
 	ringHead += bytes;
 }
 
@@ -76,7 +93,9 @@ bool start() {
 	delivered = overrun = 0;
 	anyData = false;
 	offsetBinary = false;
-	peakLevel = 0;
+	callbackCount = 0;
+	stats = audiofmt::Stats();
+	startResult = 0;
 	active = true;
 	// libnds' ARM7 picks the DSi codec (TWL) or the classic SPI microphone itself; 12-bit samples are shifted up to PCM16
 	startResult = soundMicRecord(micBuffer, MIC_BUFFER_BYTES, MicFormat_12Bit, SAMPLE_RATE, micCallback);
@@ -105,7 +124,12 @@ void release() {
 bool running() { return active; }
 bool gotData() { return anyData; }
 u32 totalDelivered() { return delivered; }
-u32 peakSample() { return peakLevel; }
+u32 peakSample() { return stats.peakAbs; }
+u32 callbacks() { return callbackCount; }
+u32 sampleCount() { return stats.samples; }
+int minSample() { return stats.samples ? stats.minV : 0; }
+int maxSample() { return stats.samples ? stats.maxV : 0; }
+int meanSample() { return audiofmt::mean(stats); }
 bool wasOffsetBinary() { return offsetBinary; }
 int startStatus() { return startResult; }
 u32 overrunBytes() { return overrun; }

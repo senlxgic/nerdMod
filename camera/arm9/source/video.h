@@ -18,6 +18,8 @@
 
 #include <string>
 
+#include "reclog.h"
+
 namespace rec {
 
 constexpr u32 MAX_DURATION_MS = 30u * 60u * 1000u;
@@ -68,6 +70,10 @@ Stats stats();
 void setFps(int fps);
 int fps();
 int slotCount();
+
+// The persistent log of the last recording attempt (also written to <videos>/last-recording.txt).
+const reclog::RecLog &lastRecLog();
+bool writeLogFile();
 
 std::string videoFolder();
 bool ensureVideoFolder();

@@ -74,7 +74,7 @@ export VPATH	:=	$(foreach dir,$(SOURCES),$(CURDIR)/$(dir)) \
 export DEPSDIR	:=	$(CURDIR)/$(BUILD)
 
 # the Camera sources are shared with the Photos app, but only its UI layer (ui.cpp) is wanted here
-CAMERA_ONLY	:=	main.cpp gallery.cpp player.cpp video.cpp videoContainer.cpp audioRecorder.cpp audioPlayer.cpp filters.cpp photos.cpp camsettings.cpp camera.c
+CAMERA_ONLY	:=	main.cpp gallery.cpp player.cpp video.cpp videoContainer.cpp audioRecorder.cpp audioPlayer.cpp filters.cpp photos.cpp camsettings.cpp camera.c sdbench.cpp
 CFILES		:=	$(filter-out $(CAMERA_ONLY),$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.c))))
 CPPFILES	:=	$(filter-out $(CAMERA_ONLY),$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.cpp))))
 BMPFILES	:=	$(foreach dir,$(GRAPHICS),$(notdir $(wildcard $(dir)/*.bmp)))

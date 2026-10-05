@@ -5,6 +5,7 @@
 
 #include "app.h"
 #include "audioPlayer.h"
+#include "audiofmt.h"
 #include "msclock.h"
 #include "ui.h"
 #include "videoContainer.h"
@@ -90,10 +91,14 @@ PlayerExit playerRun(const std::string &path, const std::string &title) {
 		if (withAudio)
 			audioPlay::start(ms); // false = no sound, the video clock keeps time
 	};
+	audioPlay::resetStats();
 	auto updateText = [&](u32 ms) {
-		char cur[16], line[32];
+		char cur[16], line[40];
 		fmtTime(cur, sizeof(cur), ms > duration ? duration : ms);
-		snprintf(line, sizeof(line), "%s / %s", cur, total);
+		// the audio state of the player, kept apart from what the recorder stored (see audiofmt.h)
+		const audiofmt::PlayClass pc = audiofmt::classifyPlayback(reader.hasAudio(), audioPlay::startAttempted(), audioPlay::startSucceeded(), audioPlay::lateChunks(), audioPlay::chunksFed());
+		const char *tag = pc == audiofmt::FILE_HAS_NO_AUDIO ? "NO SOUND" : pc == audiofmt::AUDIO_CHANNEL_START_FAILED ? "CH FAIL" : pc == audiofmt::AUDIO_UNDERRUN ? "SND LATE" : pc == audiofmt::AUDIO_PLAYING ? "SND OK" : "SND";
+		snprintf(line, sizeof(line), "%s / %s  %s", cur, total, tag);
 		uiStatus(line);
 	};
 	auto show = [&]() {

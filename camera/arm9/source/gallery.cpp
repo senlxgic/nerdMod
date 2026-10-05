@@ -69,6 +69,15 @@ Shown showItem(const MediaItem &m, u16 *scratch, int &page) {
 				snprintf(buf, sizeof(buf), "Video  %u:%02u  (frames skipped)", (unsigned)(sec / 60), (unsigned)(sec % 60));
 				s.line1 = buf;
 			}
+			// Phase 2C.1: what the file really contains (requested / actual rate, sound bytes), so recording and playback problems can be told apart
+			const nvid::Header &hd = r.info();
+			const u32 dur = r.durationMs();
+			const u32 actX10 = dur ? (u32)(((u64)r.frameCount() * 10000ull + dur / 2) / dur) : 0;
+			if (hd.audioBytes > 0)
+				snprintf(buf, sizeof(buf), "%ufps req %u.%ufps  snd %uKB", (unsigned)hd.fpsNum, (unsigned)(actX10 / 10), (unsigned)(actX10 % 10), (unsigned)(hd.audioBytes / 1024));
+			else
+				snprintf(buf, sizeof(buf), "%ufps req %u.%ufps  NO SOUND", (unsigned)hd.fpsNum, (unsigned)(actX10 / 10), (unsigned)(actX10 % 10));
+			s.line2 = buf;
 		}
 	} else if (photosDrawScaled(m.name, dst)) {
 		s.ok = true;
@@ -80,7 +89,7 @@ Shown showItem(const MediaItem &m, u16 *scratch, int &page) {
 		s.line2 = "(damaged or unsupported)";
 	} else if (!m.video && uiTopPageLooksBlank(dst)) {
 		s.line2 = "(the picture is flat/blank)"; // decoded, but one colour: say so rather than leave it unexplained
-	} else {
+	} else if (s.line2.empty()) {
 		s.line2 = dateOf(m.name);
 	}
 	page = next;

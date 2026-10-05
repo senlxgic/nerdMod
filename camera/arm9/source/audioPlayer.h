@@ -15,6 +15,8 @@ constexpr u32 RATE = 16000;
 
 // Starts silent playback at media time startMs. Returns false when there is no memory or no sound channel.
 bool start(u32 startMs);
+// Diagnostics: a 1 kHz tone through the same ring and channel (stop() ends it).
+bool startTone();
 // Adds a chunk read from the file (timeMs = media time of its first sample).
 void feed(u32 timeMs, const u8 *pcm, u32 bytes);
 // Call once per frame: silences what has been played.
@@ -26,5 +28,10 @@ bool active();
 u32 positionMs();
 // Chunks that arrived too late to be played.
 u32 lateChunks();
+// Playback statistics for the Video Info page (see audiofmt.h: classifyPlayback). resetStats() when a video is opened.
+void resetStats();
+u32 chunksFed();
+bool startAttempted();
+bool startSucceeded();
 
 } // namespace audioPlay
