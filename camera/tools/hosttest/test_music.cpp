@@ -14,6 +14,7 @@
 #include "../../../universal/include/common/nmmp3.h"
 #include "../../../universal/include/common/nmmusic.h"
 #include "../../../universal/include/common/nmwav.h"
+#include "../../../music/arm9/source/musicmath.h"
 
 static int fails = 0;
 #define CHECK(c) do { if (!(c)) { printf("FAIL line %d: %s\n", __LINE__, #c); fails++; } } while (0)
@@ -230,7 +231,46 @@ static void testLibrary() {
 	CHECK(nmmusic::nextIndex(0, 0, false, rng) == -1);
 }
 
+static void testMath() {
+	// the sound timer period is floor(2^24 / rate); the clock uses it, not the nominal rate
+	CHECK(musicmath::periodFor(44100) == 380 && musicmath::periodFor(32000) == 524 && musicmath::periodFor(0) == 0);
+	// one second of msclock ticks (33513982 / 1024) at 44.1 kHz -> about the real hardware rate 16756991 / 380 = 44097
+	const uint64_t f = musicmath::framesFromTicks(32728, musicmath::periodFor(44100));
+	CHECK(f > 44000 && f < 44200);
+	// monotonic, no overflow over hours (2^32 ticks = 36 h)
+	CHECK(musicmath::framesFromTicks(0xFFFFFFFFu, 380) > musicmath::framesFromTicks(0x7FFFFFFFu, 380));
+	// ring: free space never negative; margin respected
+	CHECK(musicmath::ringFree(0, 0, 16384, 1024) == 15360);
+	CHECK(musicmath::ringFree(15360, 0, 16384, 1024) == 0);
+	CHECK(musicmath::ringFree(20000, 0, 16384, 1024) == 0);
+	CHECK(musicmath::ringFree(15360, 1000, 16384, 1024) == 1000);
+	// a long run: write as the clock advances, the writer must never get further than a ring ahead
+	uint64_t wf = 0, pf = 0;
+	for (int step = 0; step < 2000; step++) {
+		pf += 735; // 16.7 ms at 44.1 kHz
+		for (int n = 0; n < 8 && musicmath::ringFree(wf, pf, 16384, 1024) >= 1152; n++) wf += 1152;
+		CHECK(wf <= pf + 16384 - 1024 + 1152);
+		CHECK(!musicmath::underrun(wf, pf, 64) || step < 1);
+	}
+	// underrun: the hardware ran past everything written
+	CHECK(musicmath::underrun(1000, 1100, 64) && !musicmath::underrun(1000, 1050, 64) && !musicmath::underrun(1000, 900, 64));
+	CHECK(musicmath::mediaMs(44100, 44100, 44100) == 2000 && musicmath::mediaMs(0, 22050, 44100) == 500 && musicmath::mediaMs(1, 1, 0) == 0);
+	// progress bar text and touch mapping
+	char bar[40];
+	musicmath::bar(0, 10, bar);
+	CHECK(!strcmp(bar, ">---------"));
+	musicmath::bar(500, 10, bar);
+	CHECK(!strcmp(bar, "====>-----"));
+	musicmath::bar(1000, 10, bar);
+	CHECK(!strcmp(bar, "=========>"));
+	musicmath::bar(5000, 10, bar);
+	CHECK(!strcmp(bar, "=========>"));
+	CHECK(musicmath::touchPermille(8, 8, 240) == 0 && musicmath::touchPermille(128, 8, 240) == 500 && musicmath::touchPermille(300, 8, 240) == 1000 && musicmath::touchPermille(5, 8, 240) == 0);
+	CHECK(musicmath::stepVolume(120, 1) == 127 && musicmath::stepVolume(4, -1) == 0 && musicmath::stepVolume(64, 1) == 72);
+}
+
 int main() {
+	testMath();
 	testWav();
 	testId3();
 	testMp3();

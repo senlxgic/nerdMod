@@ -233,6 +233,7 @@ jobs:
             "_nds/TWiLightMenu/camera.srldr" \
             "_nds/TWiLightMenu/photos.srldr" \
             "_nds/TWiLightMenu/weather.srldr" \
+            "_nds/TWiLightMenu/music.srldr" \
             "_nds/TWiLightMenu/dsimenu.srldr" \
             "_nds/TWiLightMenu/settings.srldr"; do
             if [ -s "7zfile/$f" ]; then
@@ -244,6 +245,10 @@ jobs:
           done
           grep -q '{"photos", "Photos", "photos.srldr"' romsel_dsimenutheme/arm9/source/virtualEntries.cpp \
             || { echo "::error title=missing-registry::Photos is not in the built-in app registry"; missing=1; }
+          grep -q '{"weather", "Weather", "weather.srldr"' romsel_dsimenutheme/arm9/source/virtualEntries.cpp \
+            || { echo "::error title=missing-registry::Weather is not in the built-in app registry"; missing=1; }
+          grep -q '{"music", "Music", "music.srldr"' romsel_dsimenutheme/arm9/source/virtualEntries.cpp \
+            || { echo "::error title=missing-registry::Music is not in the built-in app registry"; missing=1; }
           grep -q '{"camera", "Camera", "camera.srldr"' romsel_dsimenutheme/arm9/source/virtualEntries.cpp \
             || { echo "::error title=missing-registry::Camera is not in the built-in app registry"; missing=1; }
           if [ "$missing" != 0 ]; then exit 1; fi
@@ -340,7 +345,7 @@ jobs:
           # Camera app: compiler messages from its own files, and header facts that decide how
           # it is launched (unit code, binary addresses, first ARM9 words).
           if [ -f build.log ]; then
-            CAMW=$(grep -E '(^|/)camera/[^ ]*: *(warning|error)|photos\.cpp|aptina\.c' build.log | grep -E 'warning:|error:' | sed -E 's/^[^ ]*\/(camera\/[^ ]+): /\1: /' | sort | uniq -c | head -30 | enc)
+            CAMW=$(grep -E '(^|/)(camera|music)/[^ ]*: *(warning|error)|photos\.cpp|aptina\.c' build.log | grep -E 'warning:|error:' | sed -E 's/^[^ ]*\/((camera|music)\/[^ ]+): /\1: /' | sort | uniq -c | head -30 | enc)
             echo "::notice title=camera-warnings::${CAMW:-none}"
           fi
           # NDS header facts of the camera app next to two apps that are known to run in DSi mode

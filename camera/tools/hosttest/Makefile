@@ -72,5 +72,5 @@ test_weather_app: test_weather_app.cpp ../../../universal/include/common/nmweath
 test_wdraw: test_wdraw.cpp ../../../weather/source/wdraw.h ../../../universal/include/common/nmfont.h ../../../universal/include/common/nmweather.h
 	g++ -std=gnu++17 -O1 -g -Wall -Wextra -I../../../universal/include -o $@ test_wdraw.cpp
 
-test_music: test_music.cpp ../../../universal/include/common/nmwav.h ../../../universal/include/common/nmid3.h ../../../universal/include/common/nmmp3.h ../../../universal/include/common/nmmusic.h ../../../music/arm9/source/minimp3.h
+test_music: test_music.cpp ../../../universal/include/common/nmwav.h ../../../universal/include/common/nmid3.h ../../../universal/include/common/nmmp3.h ../../../universal/include/common/nmmusic.h ../../../music/arm9/source/minimp3.h ../../../music/arm9/source/musicmath.h
 	g++ -std=gnu++17 -O1 -g -Wall -Wextra -o $@ test_music.cpp -lm

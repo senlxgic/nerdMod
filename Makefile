@@ -8,7 +8,7 @@ export PROJECT	:=	$(CURDIR)
 #---------------------------------------------------------------------------------
 # Goals for Build
 #---------------------------------------------------------------------------------
-.PHONY: all package camera photos booter booter_fc 3dssplash gbapatcher quickmenu manual resources romsel_aktheme romsel_dsimenutheme romsel_r4theme settings slot1launch title
+.PHONY: all package camera photos music booter booter_fc 3dssplash gbapatcher quickmenu manual resources romsel_aktheme romsel_dsimenutheme romsel_r4theme settings slot1launch title
 
 all:	booter booter_fc 3dssplash gbapatcher quickmenu manual resources romsel_aktheme romsel_dsimenutheme romsel_r4theme settings slot1launch title
 
@@ -22,6 +22,7 @@ package:
 	@$(MAKE) -C imageview dist
 	@$(MAKE) -C camera dist
 	@$(MAKE) -C photos dist
+	@$(MAKE) -C music dist
 	@if [ -f weather/weather.nds ]; then cp weather/weather.nds 7zfile/_nds/TWiLightMenu/weather.srldr; fi
 	@$(MAKE) -C resources
 	@$(MAKE) -C romsel_aktheme dist
@@ -58,6 +59,9 @@ camera:
 
 photos:
 	@$(MAKE) -C photos
+
+music:
+	@$(MAKE) -C music
 
 imageview:
 	@$(MAKE) -C imageview
@@ -97,6 +101,7 @@ clean:
 	@$(MAKE) -C imageview clean
 	@$(MAKE) -C camera clean
 	@$(MAKE) -C photos clean
+	@$(MAKE) -C music clean
 	@$(MAKE) -C romsel_aktheme clean
 	@$(MAKE) -C romsel_dsimenutheme clean
 	@$(MAKE) -C romsel_r4theme clean
@@ -123,6 +128,7 @@ clean:
 	@rm -rf "$(PACKAGE)/Multimedia/_nds/TWiLightMenu/imageview.srldr"
 	@rm -rf "$(PACKAGE)/_nds/TWiLightMenu/camera.srldr"
 	@rm -rf "$(PACKAGE)/_nds/TWiLightMenu/photos.srldr"
+	@rm -rf "$(PACKAGE)/_nds/TWiLightMenu/music.srldr"
 	@rm -rf "$(PACKAGE)/_nds/TWiLightMenu/weather.srldr"
 	@rm -rf "$(PACKAGE)/_nds/TWiLightMenu/r4menu.srldr"
 	@rm -rf "$(PACKAGE)/_nds/TWiLightMenu/settings.srldr"

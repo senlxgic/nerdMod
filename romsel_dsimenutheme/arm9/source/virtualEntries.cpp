@@ -34,11 +34,20 @@ bool photosAvailable(const BuiltInApp &app) {
 	return fileExists(appFolder() + app.launchPath);
 }
 
+// Weather (Wi-Fi) and Music (SD card) are DSi-family apps and are offered once their .srldr is installed.
+bool dsiAppAvailable(const BuiltInApp &app) {
+	if (ms().kioskMode || !dsiFeatures())
+		return false;
+	return fileExists(appFolder() + app.launchPath);
+}
+
 // The registry. Order = order of the tiles. A new built-in app is one more line here.
 const BuiltInApp apps[] = {
 	{"camera", "Camera", "camera.srldr", nullptr, cameraAvailable},
 	// Photos works on any DSi-family console (it only reads picture files) and is offered once photos.srldr is installed.
 	{"photos", "Photos", "photos.srldr", nullptr, photosAvailable},
+	{"weather", "Weather", "weather.srldr", nullptr, dsiAppAvailable},
+	{"music", "Music", "music.srldr", nullptr, dsiAppAvailable},
 };
 
 } // namespace
