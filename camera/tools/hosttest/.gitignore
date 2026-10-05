@@ -12,3 +12,4 @@ test_reclog
 test_weather
 test_sdbench
 test_resample
+test_container_v2

@@ -22,6 +22,33 @@ HEADER = struct.Struct("<4sHHHHHHIIIIHHHHIIII2I")  # 64 bytes
 CHUNK = struct.Struct("<4sIII")
 FRAME_W, FRAME_H = 256, 192
 FRAME_BYTES = FRAME_W * FRAME_H * 2
+# videoFormat -> (width, height): 1 = RGB555 256x192, 2 = RGB332 256x192, 3 = RGB332 128x96 (version 2 files, Phase 2D)
+FORMAT_SIZE = {1: (FRAME_W, FRAME_H), 2: (FRAME_W, FRAME_H), 3: (128, 96)}
+
+
+def rgb332_to_rgb555_word(v):
+    r3, g3, b2 = v >> 5, (v >> 2) & 7, v & 3
+    r5, g5, b5 = (r3 << 2) | (r3 >> 1), (g3 << 2) | (g3 >> 1), (b2 << 3) | (b2 << 1) | (b2 >> 1)
+    return 0x8000 | r5 | (g5 << 5) | (b5 << 10)
+
+
+_LUT = None
+
+
+def decode_frame(video_fmt, payload):
+    """Returns the frame as 256x192 RGB555 little-endian bytes (what ffmpeg's bgr555le expects)."""
+    global _LUT
+    if video_fmt == 1:
+        return bytes(payload)
+    if _LUT is None:
+        _LUT = [struct.pack("<H", rgb332_to_rgb555_word(v)) for v in range(256)]
+    if video_fmt == 2:
+        return b"".join(_LUT[b] for b in payload)
+    out = bytearray()
+    for y in range(96):
+        row = b"".join(_LUT[b] * 2 for b in payload[y * 128:(y + 1) * 128])
+        out += row + row
+    return bytes(out)
 
 FLAG_COMPLETE, FLAG_HAS_AUDIO, FLAG_INNER, FLAG_DROPPED, FLAG_AUDIO_FAILED = 1, 2, 4, 8, 16
 VALID_FPS = (10, 15, 20, 30)
@@ -39,9 +66,9 @@ def read_header(f):
      audio_ch, video_fmt, index_off, index_cnt, flags, start_unix, r0, r1) = HEADER.unpack(raw)
     if magic != MAGIC:
         raise NvidError("not a NERDVID file")
-    if version != 1 or (w, h) != (FRAME_W, FRAME_H) or video_fmt != 1:
+    if version not in (1, 2) or video_fmt not in FORMAT_SIZE or (version == 1 and video_fmt != 1) or (w, h) != FORMAT_SIZE[video_fmt]:
         raise NvidError("unsupported NERDVID variant (version %d, %dx%d, format %d)" % (version, w, h, video_fmt))
-    return dict(version=version, fps_num=fps_num, fps_den=fps_den or 1, max_write_ms=r0, captured=r1, header_size=hdr_size, frames=frames, dropped=dropped, duration_ms=duration, audio_bytes=audio_bytes,
+    return dict(version=version, video_format=video_fmt, fps_num=fps_num, fps_den=fps_den or 1, max_write_ms=r0, captured=r1, header_size=hdr_size, frames=frames, dropped=dropped, duration_ms=duration, audio_bytes=audio_bytes,
                 audio_format=audio_fmt, audio_rate=audio_rate or 16000, audio_channels=audio_ch or 1, index_offset=index_off,
                 index_count=index_cnt, flags=flags, start_unix=start_unix)
 
@@ -90,7 +117,7 @@ def cmd_info(args):
     dur = (info["duration_ms"] or (times[-1] if times else 0)) / 1000.0
     audio_bytes = sum(len(p) for _, p in audio)
     print("file          :", args.input)
-    print("container     : NERDVID v%d" % info["version"])
+    print("container     : NERDVID v%d  (video format %d: %s)" % (info["version"], info["video_format"], {1: "RGB555 256x192", 2: "RGB332 256x192", 3: "RGB332 128x96"}[info["video_format"]]))
     print("complete      :", bool(info["flags"] & FLAG_COMPLETE))
     print("camera        :", "inner" if info["flags"] & FLAG_INNER else "outer")
     print("requested fps : %d" % (info["fps_num"] // info["fps_den"]))
@@ -149,6 +176,7 @@ def cmd_to_video(args):
                         vout.write(last_frame)
                         frames += 1
                         next_slot += 1
+                payload = decode_frame(info["video_format"], payload)
                 vout.write(payload)
                 frames += 1
                 next_slot = max(next_slot, slot) + 1

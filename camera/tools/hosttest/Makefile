@@ -1,4 +1,4 @@
-test: test_container test_fps test_audio test_audiofmt test_bmpscale test_format test_font test_weather test_net test_photopolicy test_audioclass test_reclog test_sdbench test_resample
+test: test_container test_fps test_audio test_audiofmt test_bmpscale test_format test_font test_weather test_net test_photopolicy test_audioclass test_reclog test_sdbench test_resample test_container_v2
 	./test_container
 	./test_fps
 	./test_audio
@@ -13,6 +13,7 @@ test: test_container test_fps test_audio test_audiofmt test_bmpscale test_format
 	./test_reclog
 	./test_sdbench
 	./test_resample
+	./test_container_v2
 
 test_reclog: test_reclog.cpp ../../arm9/source/reclog.h
 	g++ -std=gnu++17 -O1 -g -Wall -Wextra -o $@ test_reclog.cpp
@@ -51,10 +52,13 @@ test_container: test_container.cpp ../../arm9/source/videoContainer.cpp ../../ar
 	g++ -std=gnu++17 -O1 -g -Wall -Wextra -I. -o $@ test_container.cpp ../../arm9/source/videoContainer.cpp
 
 clean:
-	rm -f test_reclog test_audioclass test_container test_fps test_audio test_audiofmt test_bmpscale test_format test_font test_weather test_net test_font test_photopolicy
+	rm -f test_container_v2 test_reclog test_audioclass test_container test_fps test_audio test_audiofmt test_bmpscale test_format test_font test_weather test_net test_font test_photopolicy
 
 test_sdbench: test_sdbench.cpp ../../arm9/source/sdbenchcalc.h
 	g++ -std=gnu++17 -O1 -g -Wall -Wextra -o $@ test_sdbench.cpp
 
 test_resample: test_resample.cpp ../../arm9/source/audioresample.h
 	g++ -std=gnu++17 -O1 -g -Wall -Wextra -o $@ test_resample.cpp -lm
+
+test_container_v2: test_container_v2.cpp ../../arm9/source/videoContainer.cpp ../../arm9/source/videoContainer.h ../../arm9/source/videofmt.h nds.h
+	g++ -std=gnu++17 -O1 -g -Wall -Wextra -I. -o $@ test_container_v2.cpp ../../arm9/source/videoContainer.cpp

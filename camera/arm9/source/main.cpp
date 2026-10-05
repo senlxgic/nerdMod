@@ -266,6 +266,7 @@ void cameraMode() {
 	bool videoMode = false;
 	fx::set(fx::NORMAL);
 	rec::setFps(camsettings::videoFps());
+	rec::setQuality(camsettings::videoQuality());
 	uiTopSetCamera(cam == CAM_INNER);
 	uiTopSetMode(false);
 	showCameraButtons(false, false);
@@ -368,6 +369,7 @@ void cameraMode() {
 						}
 						dmaCopyHalfWords(3, f, uiTopPage(back), nvid::FRAME_BYTES);
 					}
+					rec::frameFinished(); // compact formats are encoded now, after the effect
 				} else {
 					fx::applyFrame(uiTopPage(back)); // live effect on the finished preview page (no-op for NORMAL)
 				}

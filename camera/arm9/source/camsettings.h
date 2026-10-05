@@ -5,5 +5,7 @@ namespace camsettings {
 
 int videoFps();			// 10, 15, 20 or 30 (loaded on first use)
 void setVideoFps(int fps);	// validates and saves
+int videoQuality();		// vfmt::Quality: 0 HIGH, 1 BALANCED, 2 SMALL
+void setVideoQuality(int quality);
 
 } // namespace camsettings

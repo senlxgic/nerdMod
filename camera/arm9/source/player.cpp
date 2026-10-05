@@ -121,13 +121,13 @@ PlayerExit playerRun(const std::string &path, const std::string &title) {
 				audioPlay::feed(c.timeMs, abuf, c.size);
 				continue;
 			}
-			if (c.fourcc == nvid::CHUNK_VIDEO && c.size == nvid::FRAME_BYTES) {
+			if (c.fourcc == nvid::CHUNK_VIDEO && c.size == reader.payloadBytes()) {
 				if (allowSkip && nowPos() > c.timeMs + 150) {
 					if (!reader.skipPayload(c.size))
 						return false;
 					continue;
 				}
-				if (!reader.readPayload(frame, c.size))
+				if (!reader.readVideoPayload(frame))
 					return false;
 				frameTime = c.timeMs;
 				haveFrame = true;

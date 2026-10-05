@@ -15,6 +15,7 @@
 #include "common/systemdetails.h"
 #include "msclock.h"
 #include "videoContainer.h"
+#include "videofmt.h"
 
 namespace rec {
 
@@ -23,8 +24,8 @@ namespace {
 // ---- buffers -------------------------------------------------------------------------------------
 // A slot is the sector-aligned NERDVID unit (see videoContainer.h): PAD chunk, VFRM header, frame. The camera DMA
 // lands at slot + 512 and the whole slot (98816 bytes = 193 sectors) goes to the card in one write.
-constexpr u32 SLOT_BYTES = nvid::VIDEO_SLOT_BYTES;
-constexpr int SLOT_COUNT = 12;					   // maximum; 1 being captured + up to 11 waiting for the card (1.15 MB; 0.37 s at 30 fps)
+constexpr int SLOT_COUNT = 32;					   // maximum number of slots; how many are used depends on the format (SLOT_BUDGET_BYTES)
+constexpr u32 SLOT_BUDGET_BYTES = 1200000;		   // HIGH: 12 slots (0.4 s at 30 fps), BALANCED: 24, SMALL: 32
 constexpr u32 AUDIO_CHUNK_MAX = 16384;
 constexpr u32 AUDIO_CHUNK_MIN = 8192;			   // write audio as soon as this much is waiting (0.25 s)
 constexpr u32 AUDIO_URGENT = 24576;				   // ... and before video if this much is waiting (0.75 s)
@@ -39,6 +40,16 @@ struct Slot {
 };
 
 Slot slots[SLOT_COUNT];
+u8 *capBuf = nullptr;		// camera target of the compact formats (the picture as RGB555; encoded into a slot when a frame is due)
+int convSlot = -1;			// slot reserved for the frame waiting for frameFinished()
+u32 convTime = 0;
+bool haveShown = false;
+int qualitySetting = vfmt::DEFAULT_QUALITY;
+int recQuality = vfmt::DEFAULT_QUALITY;
+u16 recFormat = vfmt::F_RGB555;
+u32 slotBytes = nvid::VIDEO_SLOT_BYTES;
+u32 convMsMax = 0;
+bool highQuality() { return recFormat == vfmt::F_RGB555; }
 u8 freeList[SLOT_COUNT];
 int freeCount = 0;
 int slotN = SLOT_COUNT;		// buffers actually allocated (at least MIN_SLOTS)
@@ -100,15 +111,25 @@ void freeBuffers() {
 	}
 	free(audioChunk);
 	audioChunk = nullptr;
+	free(capBuf);
+	capBuf = nullptr;
+	convSlot = -1;
+	haveShown = false;
 	freeCount = 0;
 	queueHead = queueCount = 0;
 	current = shown = -1;
 }
 
 bool allocBuffers() {
+	recQuality = vfmt::sanitizeQuality(qualitySetting);
+	recFormat = vfmt::formatForQuality(recQuality);
+	slotBytes = nvid::slotBytesFor(recFormat);
+	u32 want = SLOT_BUDGET_BYTES / slotBytes;
+	if (want > (u32)SLOT_COUNT)
+		want = SLOT_COUNT;
 	slotN = 0;
-	for (int i = 0; i < SLOT_COUNT; i++) {
-		slots[i].base = (u8 *)memalign(32, SLOT_BYTES);
+	for (u32 i = 0; i < want; i++) {
+		slots[i].base = (u8 *)memalign(32, slotBytes);
 		if (!slots[i].base)
 			break;
 		slotN++;
@@ -117,16 +138,26 @@ bool allocBuffers() {
 		freeBuffers();
 		return false;
 	}
+	if (!highQuality()) {
+		capBuf = (u8 *)memalign(32, nvid::FRAME_BYTES);
+		if (!capBuf) {
+			freeBuffers();
+			return false;
+		}
+	}
 	audioChunk = (u8 *)memalign(32, 32 + AUDIO_CHUNK_MAX + nvid::AUDIO_BLOCK_EXTRA);
 	if (!audioChunk) {
 		freeBuffers();
 		return false;
 	}
 	freeCount = 0;
-	for (int i = slotN - 1; i >= 1; i--)
+	const int firstFree = highQuality() ? 1 : 0; // HIGH: slot 0 is the one the camera writes into
+	for (int i = slotN - 1; i >= firstFree; i--)
 		freeList[freeCount++] = (u8)i;
-	current = 0;
+	current = highQuality() ? 0 : -1;
 	shown = -1;
+	haveShown = false;
+	convSlot = -1;
 	queueHead = queueCount = 0;
 	return true;
 }
@@ -151,7 +182,7 @@ bool writeOneVideo() {
 	const u32 ms = msclock::toMs(msclock::ticks() - before);
 	if (ms > SLOW_WRITE_MS)
 		slowWrites++;
-	noteWrite(ms, SLOT_BYTES, true);
+	noteWrite(ms, slotBytes, true);
 	if (ok)
 		storedCount++;
 
@@ -189,7 +220,17 @@ const char *stopReasonName(StopReason r) {
 } // namespace
 
 // =================================================================================================
-const char *formatName() { return "NERDVID1-RGB555-A512"; }
+const char *formatName() {
+	static char name[24];
+	snprintf(name, sizeof name, "NV2-%s-A512", vfmt::formatTag(vfmt::formatForQuality(vfmt::sanitizeQuality(qualitySetting))));
+	return name;
+}
+void setQuality(int q) {
+	if (!recording)
+		qualitySetting = vfmt::sanitizeQuality(q);
+}
+int quality() { return recording ? recQuality : qualitySetting; }
+u32 maxConvertMs() { return convMsMax; }
 
 std::string videoFolder() { return deviceRoot() + "/_nds/nerdMod/videos"; }
 
@@ -226,7 +267,7 @@ void failStart(const char *note, int requested) {
 	reclog::copyStr(lastLog.result, sizeof(lastLog.result), "START_FAILED");
 	reclog::copyStr(lastLog.note, sizeof(lastLog.note), note);
 	reclog::copyStr(lastLog.stop_reason, sizeof(lastLog.stop_reason), "START_FAILED");
-	reclog::copyStr(lastLog.recording_format, sizeof(lastLog.recording_format), "NERDVID1-RGB555-A512");
+	reclog::copyStr(lastLog.recording_format, sizeof(lastLog.recording_format), formatName());
 	lastLog.requested_fps = (u32)requested;
 	lastLog.rtc_seconds = 0;
 	writeLogFile();
@@ -260,6 +301,8 @@ bool start(bool innerCamera, std::string &error) {
 	recFps = fpsutil::sanitize(fpsSetting);
 	params.fpsNum = (u16)recFps;
 	params.startUnix = (u32)time(NULL);
+	params.videoFormat = recFormat;
+	convMsMax = 0;
 	if (!writer.open(tmpPath, params)) {
 		error = (writer.lastError() == ENOSPC) ? "SD card full" : "Cannot create file";
 		{
@@ -294,8 +337,16 @@ bool start(bool innerCamera, std::string &error) {
 	return true;
 }
 
-u16 *captureTarget() { return current >= 0 ? slots[current].pixels() : nullptr; }
-const u16 *lastFrame() { return shown >= 0 ? slots[shown].pixels() : nullptr; }
+u16 *captureTarget() {
+	if (!highQuality())
+		return (u16 *)capBuf;
+	return current >= 0 ? slots[current].pixels() : nullptr;
+}
+const u16 *lastFrame() {
+	if (!highQuality())
+		return haveShown ? (const u16 *)capBuf : nullptr;
+	return shown >= 0 ? slots[shown].pixels() : nullptr;
+}
 u32 elapsedMs() { return recording ? nowMs() : 0; }
 u32 queuedFrames() { return (u32)queueCount; }
 u32 skippedDueFrames() { return skippedDue; }
@@ -327,10 +378,18 @@ Stats stats() {
 }
 
 void frameCaptured() {
-	if (!recording || current < 0)
+	if (!recording)
 		return;
-	DC_InvalidateRange(slots[current].pixels(), nvid::FRAME_BYTES); // the camera DMA wrote this behind the cache
-	shown = current;
+	const bool high = highQuality();
+	if (high) {
+		if (current < 0)
+			return;
+		DC_InvalidateRange(slots[current].pixels(), nvid::FRAME_BYTES); // the camera DMA wrote this behind the cache
+		shown = current;
+	} else {
+		DC_InvalidateRange(capBuf, nvid::FRAME_BYTES);
+		haveShown = true;
+	}
 
 	capturedCount++;
 	const u32 now = nowMs();
@@ -346,17 +405,42 @@ void frameCaptured() {
 	}
 	consecutiveSkips = 0;
 
-	queueSlot[(queueHead + queueCount) % slotN] = (u8)current;
-	queueTime[(queueHead + queueCount) % slotN] = now;
-	queueCount++;
-	if ((u32)queueCount > bufferPeak)
-		bufferPeak = (u32)queueCount;
-	current = freeList[--freeCount];
+	if (high) {
+		queueSlot[(queueHead + queueCount) % slotN] = (u8)current;
+		queueTime[(queueHead + queueCount) % slotN] = now;
+		queueCount++;
+		if ((u32)queueCount > bufferPeak)
+			bufferPeak = (u32)queueCount;
+		current = freeList[--freeCount];
+	} else {
+		// the picture may still get an effect (frameFinished is called after it): reserve the slot now, encode later
+		convSlot = freeList[--freeCount];
+		convTime = now;
+	}
 
 	u32 k = fpsutil::nearestIndex(now, recFps);
 	if (k < nextIndex)
 		k = nextIndex;
 	nextIndex = k + 1;
+}
+
+// Compact formats: encodes the (effect-processed) picture into the reserved slot and queues it. No-op for HIGH.
+void frameFinished() {
+	if (!recording || highQuality() || convSlot < 0)
+		return;
+	const u32 before = msclock::ticks();
+	u8 *payload = slots[convSlot].base + nvid::VIDEO_FRAME_OFFSET;
+	vfmt::encode(recFormat, (const u16 *)capBuf, payload);
+	DC_FlushRange(payload, vfmt::frameBytes(recFormat)); // the card reads RAM, not the cache
+	const u32 ms = msclock::toMs(msclock::ticks() - before);
+	if (ms > convMsMax)
+		convMsMax = ms;
+	queueSlot[(queueHead + queueCount) % slotN] = (u8)convSlot;
+	queueTime[(queueHead + queueCount) % slotN] = convTime;
+	queueCount++;
+	if ((u32)queueCount > bufferPeak)
+		bufferPeak = (u32)queueCount;
+	convSlot = -1;
 }
 
 void pump() {
@@ -454,7 +538,11 @@ Result stop(StopReason reason) {
 		L.aligned_writes = writer.alignedWrites();
 		L.loop_iterations = pumpCalls;
 		L.rtc_seconds = (u32)time(NULL) - rtcStart;
-		reclog::copyStr(L.recording_format, sizeof(L.recording_format), "NERDVID1-RGB555-A512");
+		{
+			char fmtName[24];
+			snprintf(fmtName, sizeof fmtName, "NV2-%s-A512", vfmt::formatTag(recFormat));
+			reclog::copyStr(L.recording_format, sizeof(L.recording_format), fmtName);
+		}
 		L.audio_init = (u32)(int32_t)audioRec::startStatus();
 		L.audio_callbacks = audioRec::callbacks();
 		L.audio_bytes = audioRec::totalDelivered();

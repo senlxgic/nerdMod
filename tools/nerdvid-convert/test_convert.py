@@ -109,6 +109,34 @@ try:
         info(os.path.join(tmp, "bad")); check(False, "garbage must raise")
     except nv.NvidError:
         pass
+    # Phase 2D: version 2 headers (RGB332 full / half) are accepted and decode to 256x192 RGB555
+    def make_v2(path, fmt):
+        w, h = nv.FORMAT_SIZE[fmt]
+        out = io.BytesIO(); out.write(b"\0" * 64)
+        payload = bytes(range(256)) * (w * h // 256)
+        out.write(nv.CHUNK.pack(b"VFRM", len(payload), 0, 0) + payload)
+        hdr = nv.HEADER.pack(nv.MAGIC, 2, 64, w, h, 10, 1, 1, 0, 100, 0, 0, 0, 0, fmt, 0, 0, 0, 0, 0, 1)
+        d = bytearray(out.getvalue()); d[:64] = hdr
+        open(path, "wb").write(bytes(d))
+    for fmt in (2, 3):
+        p = os.path.join(tmp, "v2_%d.nvid" % fmt); make_v2(p, fmt)
+        with open(p, "rb") as f:
+            inf = nv.read_header(f)
+            check(inf["video_format"] == fmt, "v2 format read")
+            frames = [pl for fc, t, pl in nv.iter_chunks(f, inf) if fc == b"VFRM"]
+        check(len(frames) == 1, "v2 frame found")
+        dec = nv.decode_frame(fmt, frames[0])
+        check(len(dec) == nv.FRAME_BYTES, "decoded to 256x192 RGB555")
+        check(struct.unpack("<H", dec[:2])[0] == nv.rgb332_to_rgb555_word(0), "first pixel")
+        check(nv.rgb332_to_rgb555_word(255) == 0xFFFF, "white stays white")
+    # v1 may not claim a compact format
+    p = os.path.join(tmp, "v1bad.nvid"); make_v2(p, 2)
+    d = bytearray(open(p, "rb").read()); d[4:6] = struct.pack("<H", 1); open(p, "wb").write(bytes(d))
+    try:
+        with open(p, "rb") as f: nv.read_header(f)
+        check(False, "v1 with RGB332 must raise")
+    except nv.NvidError:
+        pass
     # conversion keeps real frame count with drops filled (needs ffmpeg)
     if shutil.which("ffmpeg"):
         p = os.path.join(tmp, "f30.nvid"); o = os.path.join(tmp, "o.mp4")

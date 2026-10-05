@@ -4,6 +4,7 @@
 #include <cerrno>
 #include <cstring>
 #include <fcntl.h>
+#include <stdlib.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -27,6 +28,14 @@ bool readFully(int fd, void *dst, u32 bytes) {
 }
 
 } // namespace
+
+bool validHeader(const Header &h) {
+	if (h.magic != MAGIC || h.version < VERSION_MIN || h.version > VERSION || h.headerSize != HEADER_SIZE)
+		return false;
+	if (!vfmt::known(h.videoFormat) || (h.version == 1 && h.videoFormat != VIDEO_RGB555))
+		return false;
+	return h.width == vfmt::widthOf(h.videoFormat) && h.height == vfmt::heightOf(h.videoFormat);
+}
 
 // =================================================================================================
 //  Writer
@@ -61,14 +70,14 @@ bool Writer::open(const std::string &path, const WriteParams &params) {
 	header.magic = MAGIC;
 	header.version = VERSION;
 	header.headerSize = HEADER_SIZE;
-	header.width = WIDTH;
-	header.height = HEIGHT;
+	header.videoFormat = vfmt::known(params.videoFormat) ? params.videoFormat : VIDEO_RGB555;
+	header.width = (u16)vfmt::widthOf(header.videoFormat);
+	header.height = (u16)vfmt::heightOf(header.videoFormat);
 	header.fpsNum = params.fpsNum;
 	header.fpsDen = 1;
 	header.audioFormat = params.audio ? AUDIO_PCM16_MONO : AUDIO_NONE;
 	header.audioRate = params.audio ? params.audioRate : 0;
 	header.audioChannels = params.audio ? 1 : 0;
-	header.videoFormat = VIDEO_RGB555;
 	header.flags = (params.audio ? FLAG_HAS_AUDIO : 0) | (params.innerCamera ? FLAG_INNER_CAMERA : 0);
 	header.startUnix = params.startUnix;
 
@@ -125,14 +134,15 @@ bool Writer::writeVideoSlot(u8 *slot, u32 timeMs) {
 	pad->reserved = 0;
 	ChunkHeader *h = (ChunkHeader *)(slot + VIDEO_HEADER_OFFSET);
 	h->fourcc = CHUNK_VIDEO;
-	h->size = FRAME_BYTES;
+	const u32 payload = vfmt::frameBytes(header.videoFormat);
+	h->size = payload;
 	h->timeMs = timeMs;
 	h->reserved = 0;
 	DC_FlushRange(slot, VIDEO_FRAME_OFFSET); // headers and filler: the card is fed from RAM, not from the cache
 
 	const u32 offset = position + VIDEO_HEADER_OFFSET;
 	const bool aligned = (position % SECTOR) == 0;
-	if (!writeAll(slot, VIDEO_SLOT_BYTES))
+	if (!writeAll(slot, VIDEO_FRAME_OFFSET + payload))
 		return false;
 	if (aligned)
 		alignedCount++;
@@ -225,8 +235,7 @@ bool readHeader(const std::string &path, Header &out) {
 	if (fd < 0)
 		return false;
 	Header h;
-	bool ok = readFully(fd, &h, sizeof(h)) && h.magic == MAGIC && h.version == VERSION && h.headerSize == HEADER_SIZE && h.width == WIDTH && h.height == HEIGHT &&
-			  h.videoFormat == VIDEO_RGB555;
+	bool ok = readFully(fd, &h, sizeof(h)) && validHeader(h);
 	::close(fd);
 	if (ok)
 		out = h;
@@ -236,6 +245,8 @@ bool readHeader(const std::string &path, Header &out) {
 Reader::~Reader() { close(); }
 
 void Reader::close() {
+	free(scratch);
+	scratch = nullptr;
 	if (fd >= 0) {
 		::close(fd);
 		fd = -1;
@@ -248,8 +259,7 @@ bool Reader::open(const std::string &path) {
 	fd = ::open(path.c_str(), O_RDONLY);
 	if (fd < 0)
 		return false;
-	if (!readFully(fd, &header, sizeof(header)) || header.magic != MAGIC || header.version != VERSION || header.headerSize != HEADER_SIZE || header.width != WIDTH ||
-		header.height != HEIGHT || header.videoFormat != VIDEO_RGB555) {
+	if (!readFully(fd, &header, sizeof(header)) || !validHeader(header)) {
 		close();
 		return false;
 	}
@@ -269,7 +279,7 @@ bool Reader::open(const std::string &path) {
 		if (lseek(fd, header.indexOffset, SEEK_SET) == (off_t)header.indexOffset && readFully(fd, index.data(), header.indexCount * sizeof(IndexEntry))) {
 			haveIndex = true;
 			for (const IndexEntry &e : index) {
-				if (e.offset < HEADER_SIZE || (u64)e.offset + CHUNK_HEADER_SIZE + FRAME_BYTES > header.indexOffset) {
+				if (e.offset < HEADER_SIZE || (u64)e.offset + CHUNK_HEADER_SIZE + payloadBytes() > header.indexOffset) {
 					haveIndex = false;
 					break;
 				}
@@ -297,7 +307,7 @@ bool Reader::buildIndexByScanning() {
 		if ((h.fourcc != CHUNK_VIDEO && h.fourcc != CHUNK_AUDIO && h.fourcc != CHUNK_PAD) || h.size > MAX_PAYLOAD || (u64)pos + CHUNK_HEADER_SIZE + h.size > dataEnd)
 			break;
 		if (h.fourcc == CHUNK_VIDEO) {
-			if (h.size != FRAME_BYTES)
+			if (h.size != payloadBytes())
 				break;
 			index.push_back({pos, h.timeMs});
 		}
@@ -386,15 +396,36 @@ bool Reader::skipPayload(u32 bytes) {
 	return true;
 }
 
+bool Reader::decodeInto(void *dst, u32 bytes) {
+	const u16 f = header.videoFormat;
+	if (f == VIDEO_RGB555)
+		return readPayload(dst, bytes);
+	if (!scratch)
+		scratch = (u8 *)malloc(vfmt::frameBytes(VIDEO_RGB332));
+	if (!scratch || !readPayload(scratch, bytes))
+		return false;
+	vfmt::decode(f, scratch, (u16 *)dst);
+	return true;
+}
+
+bool Reader::readVideoPayload(void *dst) {
+	if (fd < 0 || payloadLeft != payloadBytes())
+		return false;
+	return decodeInto(dst, payloadBytes());
+}
+
 bool Reader::readFrame(u32 n, void *dst, u32 *timeMs) {
 	if (fd < 0 || n >= index.size())
 		return false;
 	const u32 off = index[n].offset + CHUNK_HEADER_SIZE;
-	if (lseek(fd, off, SEEK_SET) != (off_t)off || !readFully(fd, dst, FRAME_BYTES))
+	if (lseek(fd, off, SEEK_SET) != (off_t)off)
+		return false;
+	cursor = off;
+	payloadLeft = payloadBytes();
+	if (!decodeInto(dst, payloadBytes()))
 		return false;
 	if (timeMs)
 		*timeMs = index[n].timeMs;
-	cursor = off + FRAME_BYTES;
 	payloadLeft = 0;
 	return true;
 }

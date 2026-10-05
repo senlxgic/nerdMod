@@ -13,6 +13,7 @@
 #include "camera.h"
 #include "camsettings.h"
 #include "fpsutil.h"
+#include "videofmt.h"
 #include "msclock.h"
 #include "reclog.h"
 #include "sdbench.h"
@@ -171,7 +172,7 @@ void buildInfoPage(int page, const reclog::RecLog &v, Page &p, const char *&titl
 		p.add("Camera gave %u frames", (unsigned)v.camera_frames_seen);
 		p.add("Buffers used %u of %u", (unsigned)v.buffer_peak, (unsigned)v.buffer_slots);
 		p.add("Length %u s", (unsigned)((v.duration_ms + 500) / 1000));
-		p.add("%s", v.result);
+		p.add("%s  %s", v.result, v.recording_format);
 	} else if (page == 1) {
 		title = "SD card";
 		const u32 mbs = reclog::mbPerSecX100(v.sd_bytes, v.sd_total_write_ms);
@@ -376,26 +377,14 @@ Exit audioTest() {
 
 // ---------------------------------------------------------------- camera info
 
-Exit cameraInfo() {
-	Page p;
+void buildCameraPage(Page &p) {
 	p.add("DSi hardware: %s", cameraHardwareAccessible() ? "yes" : "NO");
 	p.add("Inner camera: %s", cameraAvailable(CAM_INNER) ? "ready" : "none");
 	p.add("Outer camera: %s", cameraAvailable(CAM_OUTER) ? "ready" : "none");
 	p.add("Video: %d FPS %s", camsettings::videoFps(), fpsWord(camsettings::videoFps()));
+	p.add("Quality: %s", vfmt::qualityName(camsettings::videoQuality()));
 	p.add("Format: %s", rec::formatName());
 	p.add("Mic: %s", audioRec::pathName());
-	drawDialog("Camera info", p, "");
-	while (true) {
-		scanKeys();
-		const u32 down = keysDown(), up = keysUp();
-		const int touched = uiHandleInput(down, up);
-		uiTick();
-		if (appPowerExitRequested())
-			return Exit::Power;
-		if ((down & (KEY_A | KEY_B)) || touched == B_BACK_ID)
-			return Exit::Back;
-		swiWaitForVBlank();
-	}
 }
 
 } // namespace
@@ -445,9 +434,43 @@ Exit chooseFps(bool *changed) {
 	}
 }
 
+Exit chooseQuality() {
+	char text[3][28];
+	const char *labels[3];
+	Nav nav;
+	nav.rows = vfmt::QUALITY_COUNT;
+	for (int i = 0; i < vfmt::QUALITY_COUNT; i++) {
+		snprintf(text[i], sizeof text[i], "%s", vfmt::qualityName(i));
+		labels[i] = text[i];
+	}
+	nav.sel = vfmt::sanitizeQuality(camsettings::videoQuality());
+	showRows(vfmt::QUALITY_COUNT, labels, "VIDEO QUALITY");
+	marker(nav);
+	uiTextCentred(18, vfmt::qualityHint(nav.sel));
+	while (true) {
+		bool moved;
+		const int act = pollInput(nav, moved);
+		if (act < 0)
+			return Exit::Power;
+		if (moved) {
+			marker(nav);
+			uiTextAt(2, 18, "                              ");
+			uiTextCentred(18, vfmt::qualityHint(nav.sel));
+		}
+		if (act == B_BACK_ID)
+			return Exit::Back;
+		if (act >= B_ROW0 && act < B_ROW0 + vfmt::QUALITY_COUNT) {
+			rec::setQuality(act - B_ROW0);
+			camsettings::setVideoQuality(act - B_ROW0);
+			return Exit::Back;
+		}
+		swiWaitForVBlank();
+	}
+}
+
 Exit recordingInfo(int page) {
 	const reclog::RecLog v = viewLog();
-	const int pages = v.result[0] ? 3 : 1;
+	const int pages = v.result[0] ? 4 : 2; // the last page is always the camera information
 	bool redraw = true;
 	if (page >= pages)
 		page = 0;
@@ -455,7 +478,12 @@ Exit recordingInfo(int page) {
 		if (redraw) {
 			Page p;
 			const char *title = "Recording Info";
-			buildInfoPage(page, v, p, title);
+			if (page == pages - 1) {
+				title = "Camera info";
+				buildCameraPage(p);
+			} else {
+				buildInfoPage(page, v, p, title);
+			}
 			char foot[32];
 			snprintf(foot, sizeof(foot), "A: page %d/%d", page + 1, pages);
 			drawDialog(title, p, foot);
@@ -493,6 +521,7 @@ Exit recordingSummary() {
 		p.add("Dropped    %u", (unsigned)v.dropped_frames);
 		p.add("SD speed   %u.%02u MB/s", (unsigned)(mbs / 100), (unsigned)(mbs % 100));
 		p.add("Mic        %s", micWord(v));
+		p.add("Format     %s", v.recording_format);
 	}
 	drawDialog("Video saved", p, "A: details");
 	while (true) {
@@ -513,12 +542,13 @@ Exit recordingSummary() {
 Exit run() {
 	Nav nav;
 	nav.rows = 5;
-	char fpsLabel[28];
-	const char *labels[5] = {fpsLabel, "Recording Info", "SD Speed Test", "Audio Test", "Camera Info"};
+	char fpsLabel[28], qualLabel[28];
+	const char *labels[5] = {fpsLabel, "Recording Info", "SD Speed Test", "Audio Test", qualLabel};
 	bool redraw = true;
 	while (true) {
 		if (redraw) {
 			snprintf(fpsLabel, sizeof fpsLabel, "Video FPS: %d", rec::fps());
+			snprintf(qualLabel, sizeof qualLabel, "Video Quality: %s", vfmt::qualityName(rec::quality()));
 			showRows(5, labels, "CAMERA SETTINGS");
 			marker(nav);
 			redraw = false;
@@ -538,7 +568,7 @@ Exit run() {
 			case B_ROW1: e = recordingInfo(0); break;
 			case B_ROW2: e = sdSpeedTest(); break;
 			case B_ROW3: e = audioTest(); break;
-			case B_ROW4: e = cameraInfo(); break;
+			case B_ROW4: e = chooseQuality(); break;
 			default: ran = false; break;
 		}
 		if (ran) {

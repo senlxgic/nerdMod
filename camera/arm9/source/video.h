@@ -66,6 +66,12 @@ struct Stats {
 };
 Stats stats();
 
+// Video Quality of the next recording (vfmt::Quality: HIGH = RGB555 256x192, BALANCED = RGB332 256x192, SMALL = RGB332 128x96).
+void setQuality(int quality);
+int quality();
+// Slowest RGB555 -> compact conversion of the last recording, in ms.
+u32 maxConvertMs();
+
 // Frame rate of the next recording (10, 15, 20 or 30). Cannot change while recording.
 void setFps(int fps);
 int fps();
@@ -90,6 +96,8 @@ u16 *captureTarget();
 // Call when that DMA has finished. The frame is then available through lastFrame() until the next call.
 void frameCaptured();
 const u16 *lastFrame();
+// Call after any effect was applied to lastFrame(): the compact formats are encoded here (HIGH: nothing to do).
+void frameFinished();
 
 // Writes at most one chunk to the card. Call once per main-loop iteration.
 void pump();

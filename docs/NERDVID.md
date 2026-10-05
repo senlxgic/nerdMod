@@ -26,7 +26,7 @@ Chunk  = ChunkHeader (16 bytes) | payload (size bytes, always a multiple of 16)
 | 32 | u16 | audioFormat | 0 none, 1 = signed 16-bit PCM mono |
 | 34 | u16 | audioRate | 16000 |
 | 36 | u16 | audioChannels | 1 |
-| 38 | u16 | videoFormat | 1 = RGB555 |
+| 38 | u16 | videoFormat | 1 = RGB555 256x192, 2 = RGB332 256x192, 3 = RGB332 128x96 (formats 2 and 3 need version 2) |
 | 40 | u32 | indexOffset | 0 = no index |
 | 44 | u32 | indexCount | |
 | 48 | u32 | flags | bit0 COMPLETE (clean stop, index valid), bit1 HAS_AUDIO, bit2 INNER_CAMERA, bit3 FRAMES_DROPPED, bit4 AUDIO_FAILED (Phase 2C: a microphone was requested but produced no data) |
@@ -61,14 +61,31 @@ A file without `COMPLETE` (power loss, battery) has no index and no patched coun
 loses at most the last, partly written frame. The temporary name while recording is `REC_TEMP.nvid.tmp`; it is renamed to
 `NV_YYYYMMDD_HHMMSS.nvid` after the clean stop.
 
-## Version policy (Phase 2C)
+## Version policy (Phase 2C; superseded by version 2 below)
 
-The container stays at **version 1**. Phase 2C only gives meaning to fields that older files wrote as 0 (`fpsNum` is now the
+Phase 2C kept the container at **version 1**. Phase 2C only gives meaning to fields that older files wrote as 0 (`fpsNum` is now the
 requested rate, the two former reserved words carry recorder statistics, flag bit 4). A reader that ignores them reads
 every old and new file; a Phase 2C reader treats 0 as "unknown". The video payload is still RGB555 (`videoFormat` 1):
 the camera is configured to emit RGB555 directly, so recording needs no per-frame CPU conversion. Native YUV422 would be
 the same 2 bytes/pixel (no smaller files) and would add a CPU conversion for the live preview, so a version-2/YUV
 container was **not** introduced. `videoFormat` reserves the numbers for it should that change.
+
+## Version 2 and video quality (Phase 2D)
+
+Phase 2D bumps the container to **version 2**. The layout is unchanged; only `videoFormat` may now be more than RGB555:
+
+| Quality (Camera setting) | videoFormat | picture | payload | slot (sector aligned) |
+|---|---|---|---|---|
+| HIGH | 1 RGB555 | 256x192, 2 B/pixel | 98,304 B | 98,816 B |
+| BALANCED (default) | 2 RGB332 | 256x192, 1 B/pixel (R3 G3 B2) | 49,152 B | 49,664 B |
+| SMALL | 3 RGB332 half | 128x96 (2x2 box average), shown at 2x | 12,288 B | 12,800 B |
+
+Why: on real hardware the SD card write speed was the bottleneck of recording (about 0.16 MB/s measured with the video recorder), so fewer
+bytes per frame is the only lever that does not depend on the card. The recorder converts the (effect-processed) RGB555 camera
+frame into the chosen payload only when a frame is due; the header `width`/`height` always describe the stored picture. Readers
+decode every format to 256x192 RGB555 (`vfmt::decode`, `videofmt.h`; Python: `decode_frame`). Version 1 files (always RGB555)
+play unchanged, a version 1 header that claims another format is rejected, as is an unknown version or format. Colour precision is
+reduced for BALANCED/SMALL (no dithering): gradients show banding. Index entries and time stamps are identical in all formats.
 
 ## Frame rates and timestamps
 
