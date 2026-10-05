@@ -78,7 +78,14 @@ bool Writer::open(const std::string &path, const WriteParams &params) {
 		err = errno ? errno : EIO;
 		return false;
 	}
-	if (!writeAll(&header, sizeof(header))) {
+	// 512-byte header block: the 64-byte header, then a PAD chunk that fills the rest of the sector
+	u8 block[HEADER_BLOCK];
+	memset(block, 0, sizeof(block));
+	memcpy(block, &header, sizeof(header));
+	ChunkHeader pad = {CHUNK_PAD, HEADER_BLOCK - HEADER_SIZE - CHUNK_HEADER_SIZE, 0, 0};
+	memcpy(block + HEADER_SIZE, &pad, sizeof(pad));
+	alignedCount = 0;
+	if (!writeAll(block, sizeof(block))) {
 		::close(fd);
 		fd = -1;
 		::remove(path.c_str());
@@ -104,6 +111,62 @@ bool Writer::writeChunk(u8 *chunk, u32 fourcc, u32 payloadBytes, u32 timeMs) {
 		index.push_back({offset, timeMs});
 	else
 		audioBytesWritten += payloadBytes;
+	return true;
+}
+
+bool Writer::writeVideoSlot(u8 *slot, u32 timeMs) {
+	if (fd < 0)
+		return false;
+	// [0] PAD chunk header, [16, 496) filler, [496] VFRM chunk header, [512] frame pixels
+	ChunkHeader *pad = (ChunkHeader *)slot;
+	pad->fourcc = CHUNK_PAD;
+	pad->size = VIDEO_HEADER_OFFSET - CHUNK_HEADER_SIZE;
+	pad->timeMs = 0;
+	pad->reserved = 0;
+	ChunkHeader *h = (ChunkHeader *)(slot + VIDEO_HEADER_OFFSET);
+	h->fourcc = CHUNK_VIDEO;
+	h->size = FRAME_BYTES;
+	h->timeMs = timeMs;
+	h->reserved = 0;
+	DC_FlushRange(slot, VIDEO_FRAME_OFFSET); // headers and filler: the card is fed from RAM, not from the cache
+
+	const u32 offset = position + VIDEO_HEADER_OFFSET;
+	const bool aligned = (position % SECTOR) == 0;
+	if (!writeAll(slot, VIDEO_SLOT_BYTES))
+		return false;
+	if (aligned)
+		alignedCount++;
+	index.push_back({offset, timeMs});
+	return true;
+}
+
+bool Writer::writeAudioBlock(u8 *block, u32 payloadBytes, u32 timeMs) {
+	if (fd < 0)
+		return false;
+	ChunkHeader *h = (ChunkHeader *)block;
+	h->fourcc = CHUNK_AUDIO;
+	h->size = payloadBytes;
+	h->timeMs = timeMs;
+	h->reserved = 0;
+	// PAD chunk after the samples, sized so that (position + total) is a multiple of the sector size
+	const u32 used = CHUNK_HEADER_SIZE + payloadBytes + CHUNK_HEADER_SIZE;
+	u32 target = position + used;
+	target = (target + SECTOR - 1) / SECTOR * SECTOR;
+	u32 padPayload = target - position - used;
+	ChunkHeader *pad = (ChunkHeader *)(block + CHUNK_HEADER_SIZE + payloadBytes);
+	pad->fourcc = CHUNK_PAD;
+	pad->size = padPayload;
+	pad->timeMs = 0;
+	pad->reserved = 0;
+	memset(block + used, 0, padPayload);
+	const u32 total = used + padPayload;
+	DC_FlushRange(block, total); // the samples were written by the CPU: they must be in RAM before the card reads them
+	const bool aligned = (position % SECTOR) == 0;
+	if (!writeAll(block, total))
+		return false;
+	if (aligned)
+		alignedCount++;
+	audioBytesWritten += payloadBytes;
 	return true;
 }
 
@@ -231,7 +294,7 @@ bool Reader::buildIndexByScanning() {
 		ChunkHeader h;
 		if (lseek(fd, pos, SEEK_SET) != (off_t)pos || !readFully(fd, &h, sizeof(h)))
 			break;
-		if ((h.fourcc != CHUNK_VIDEO && h.fourcc != CHUNK_AUDIO) || h.size > MAX_PAYLOAD || (u64)pos + CHUNK_HEADER_SIZE + h.size > dataEnd)
+		if ((h.fourcc != CHUNK_VIDEO && h.fourcc != CHUNK_AUDIO && h.fourcc != CHUNK_PAD) || h.size > MAX_PAYLOAD || (u64)pos + CHUNK_HEADER_SIZE + h.size > dataEnd)
 			break;
 		if (h.fourcc == CHUNK_VIDEO) {
 			if (h.size != FRAME_BYTES)
@@ -282,15 +345,23 @@ bool Reader::nextChunk(Chunk &chunk) {
 		if (!skipPayload(payloadLeft))
 			return false;
 	}
-	if ((u64)cursor + CHUNK_HEADER_SIZE > dataEnd)
-		return false;
 	ChunkHeader h;
-	if (!readFully(fd, &h, sizeof(h)))
-		return false;
-	if ((h.fourcc != CHUNK_VIDEO && h.fourcc != CHUNK_AUDIO) || h.size > MAX_PAYLOAD || (u64)cursor + CHUNK_HEADER_SIZE + h.size > dataEnd)
-		return false;
-	cursor += CHUNK_HEADER_SIZE;
-	payloadLeft = h.size;
+	for (int guard = 0; guard < 8; guard++) { // PAD chunks are filler: skip them
+		if ((u64)cursor + CHUNK_HEADER_SIZE > dataEnd)
+			return false;
+		if (!readFully(fd, &h, sizeof(h)))
+			return false;
+		if ((h.fourcc != CHUNK_VIDEO && h.fourcc != CHUNK_AUDIO && h.fourcc != CHUNK_PAD) || h.size > MAX_PAYLOAD || (u64)cursor + CHUNK_HEADER_SIZE + h.size > dataEnd)
+			return false;
+		cursor += CHUNK_HEADER_SIZE;
+		payloadLeft = h.size;
+		if (h.fourcc != CHUNK_PAD)
+			break;
+		if (!skipPayload(payloadLeft))
+			return false;
+		if (guard == 7)
+			return false;
+	}
 	chunk.fourcc = h.fourcc;
 	chunk.size = h.size;
 	chunk.timeMs = h.timeMs;

@@ -126,6 +126,88 @@ int main() {
 		printf("converter file: ok\n");
 	}
 
+	// 6. Phase 2C.1 aligned layout: sector-aligned writes, PAD chunks invisible to readers, seek / scan / index all work
+	{
+		nvid::Writer w;
+		nvid::WriteParams p; p.audio = true; p.fpsNum = 15;
+		CHECK(w.open(path, p));
+		CHECK(w.bytesWritten() == 512);
+		u8 *sl = (u8 *)aligned_alloc(32, nvid::VIDEO_SLOT_BYTES);
+		u8 *ab = (u8 *)aligned_alloc(32, 32 + 16384 + nvid::AUDIO_BLOCK_EXTRA);
+		memset(sl, 0, nvid::VIDEO_SLOT_BYTES);
+		u32 expectPos = 512;
+		for (int n = 0; n < 20; n++) {
+			u16 *px = (u16 *)(sl + nvid::VIDEO_FRAME_OFFSET);
+			for (u32 i = 0; i < nvid::WIDTH * nvid::HEIGHT; i++) px[i] = (u16)(0x8000 | ((n * 977 + i) & 0x7FFF));
+			CHECK(w.writeVideoSlot(sl, n * 67));
+			expectPos += nvid::VIDEO_SLOT_BYTES;
+			CHECK(w.bytesWritten() == expectPos && expectPos % 512 == 0);
+			if (n % 4 == 3) {
+				const u32 sizes[] = {16384, 8192, 4000, 16};   // multiples of 16, none a multiple of 512 minus 32
+				const u32 sz = sizes[(n / 4) % 4];
+				memset(ab + 16, 0x40 + n, sz);
+				CHECK(w.writeAudioBlock(ab, sz, n * 67));
+				CHECK(w.bytesWritten() % 512 == 0);
+				expectPos = w.bytesWritten();
+			}
+		}
+		CHECK(w.alignedWrites() == 20 + 5);
+		nvid::Final f; f.durationMs = 1340;
+		CHECK(w.finish(f));
+		free(sl); free(ab);
+		nvid::Reader r;
+		CHECK(r.open(path));
+		CHECK(r.frameCount() == 20 && r.hasAudio() && r.info().fpsNum == 15);
+		u16 *buf = (u16 *)aligned_alloc(32, nvid::FRAME_BYTES);
+		CHECK(r.readFrame(0, buf) && frameMatches(buf, 0));
+		CHECK(r.readFrame(19, buf, nullptr) && frameMatches(buf, 19));
+		CHECK(r.rewind());
+		int v = 0, au = 0; nvid::Reader::Chunk c;
+		while (r.nextChunk(c)) {
+			CHECK(c.fourcc == nvid::CHUNK_VIDEO || c.fourcc == nvid::CHUNK_AUDIO);   // PAD is never reported
+			if (c.fourcc == nvid::CHUNK_VIDEO) { CHECK(r.readPayload(buf, c.size)); CHECK(frameMatches(buf, v)); v++; }
+			else { CHECK(r.skipPayload(c.size)); au++; }
+		}
+		CHECK(v == 20 && au == 5);
+		CHECK(r.seekToTime(670));
+		CHECK(r.nextChunk(c) && c.fourcc == nvid::CHUNK_VIDEO && c.timeMs == 670);
+		// cut short: no index, still readable by scanning through the PAD chunks
+		off_t full = lseek(open(path, O_RDONLY), 0, SEEK_END);
+		CHECK(truncate(path, full - 20000) == 0);
+		nvid::Reader r2;
+		CHECK(r2.open(path));
+		CHECK(r2.frameCount() >= 17 && r2.frameCount() <= 19);
+		CHECK(r2.readFrame(r2.frameCount() - 1, buf) && frameMatches(buf, (int)r2.frameCount() - 1));
+		free(buf);
+	}
+
+	// 7. legacy layout written by Phase 2B / 2C (header, then chunks directly at byte 64, no PAD): still plays
+	{
+		FILE *f = fopen(path, "wb");
+		nvid::Header h; memset(&h, 0, sizeof h);
+		h.magic = nvid::MAGIC; h.version = nvid::VERSION; h.headerSize = nvid::HEADER_SIZE; h.width = nvid::WIDTH; h.height = nvid::HEIGHT;
+		h.fpsNum = 10; h.fpsDen = 1; h.videoFormat = nvid::VIDEO_RGB555;
+		fwrite(&h, sizeof h, 1, f);
+		u8 *sl = slot();
+		for (int n = 0; n < 7; n++) {
+			fillFrame(sl, n);
+			nvid::ChunkHeader ch = {nvid::CHUNK_VIDEO, nvid::FRAME_BYTES, (u32)n * 100, 0};
+			fwrite(&ch, sizeof ch, 1, f);
+			fwrite(sl + 32, nvid::FRAME_BYTES, 1, f);
+		}
+		fclose(f); free(sl);
+		nvid::Reader r;
+		CHECK(r.open(path));
+		CHECK(r.frameCount() == 7 && !r.hasAudio());
+		u16 *buf = (u16 *)aligned_alloc(32, nvid::FRAME_BYTES);
+		CHECK(r.readFrame(6, buf) && frameMatches(buf, 6));
+		CHECK(r.rewind());
+		nvid::Reader::Chunk c; int v = 0;
+		while (r.nextChunk(c)) { CHECK(c.fourcc == nvid::CHUNK_VIDEO); CHECK(r.skipPayload(c.size)); v++; }
+		CHECK(v == 7);
+		free(buf);
+	}
+
 	remove(path);
 	printf(failures ? "%d FAILURES\n" : "all container tests passed\n", failures);
 	return failures ? 1 : 0;

@@ -56,12 +56,14 @@ def iter_chunks(f, info):
         if len(raw) < CHUNK.size:
             return
         fourcc, size, time_ms, _ = CHUNK.unpack(raw)
-        if fourcc not in (b"VFRM", b"AUDI") or size > (1 << 20):
+        if fourcc not in (b"VFRM", b"AUDI", b"PAD ") or size > (1 << 20):
             return  # garbage: treat as end of data
         payload = f.read(size)
         if len(payload) < size:
             return  # truncated chunk
         pos += CHUNK.size + size
+        if fourcc == b"PAD ":
+            continue  # sector-alignment filler written by Phase 2C.1 and later
         yield fourcc, time_ms, payload
 
 

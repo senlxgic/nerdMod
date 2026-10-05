@@ -39,6 +39,32 @@ def make(path, fps, seconds, audio=True, drops=(), complete=True, truncate=0, p2
         data[corrupt_at:corrupt_at + 4] = b"XXXX"
     open(path, "wb").write(bytes(data))
 
+
+def make_aligned(path, fps, seconds):
+    """Phase 2C.1 layout: header block + PAD to 512, video slots = PAD + VFRM, audio blocks padded to a sector."""
+    out = io.BytesIO(); out.write(b"\0" * 64)
+    out.write(nv.CHUNK.pack(b"PAD ", 512 - 64 - 16, 0, 0) + bytes(512 - 64 - 16))
+    index, apos, stored = [], 0, 0
+    n = int(fps * seconds)
+    for k in range(n):
+        t = int(k * 1000 / fps)
+        if k % 4 == 3:
+            part = bytes(4000)
+            used = 16 + len(part) + 16
+            total = (out.tell() + used + 511) // 512 * 512 - out.tell()
+            out.write(nv.CHUNK.pack(b"AUDI", len(part), apos // 32, 0) + part + nv.CHUNK.pack(b"PAD ", total - used, 0, 0) + bytes(total - used))
+            apos += len(part)
+        out.write(nv.CHUNK.pack(b"PAD ", 480, 0, 0) + bytes(480))
+        index.append((out.tell(), t))
+        out.write(nv.CHUNK.pack(b"VFRM", nv.FRAME_BYTES, t, 0) + bytes([k & 255, 0x80]) * (nv.FRAME_BYTES // 2))
+        stored += 1
+    idx = out.tell()
+    for off, t in index:
+        out.write(struct.pack("<II", off, t))
+    hdr = nv.HEADER.pack(nv.MAGIC, 1, 64, 256, 192, fps, 1, stored, 0, int(seconds * 1000), apos, 1, 16000, 1, 1, idx, stored, nv.FLAG_COMPLETE | nv.FLAG_HAS_AUDIO, 0, 70, n)
+    data = bytearray(out.getvalue()); data[:64] = hdr
+    open(path, "wb").write(bytes(data))
+
 def info(path):
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
@@ -65,6 +91,9 @@ try:
             check("dropped       : 2" in t, "drops")
             check("actual avg fps: 29." in t, "actual avg fps\n" + t)
         check("audio         : yes" in t, "audio")
+    # Phase 2C.1 sector-aligned file with PAD chunks
+    p = os.path.join(tmp, "aligned.nvid"); make_aligned(p, 10, 2)
+    t = info(p); check("requested fps : 10" in t and "frames        : 20" in t, "aligned file info\n" + t)
     # old file (no Phase 2C fields)
     p = os.path.join(tmp, "old.nvid"); make(p, 10, 2, p2c=False)
     check("recorder" not in info(p), "old file has no recorder line")

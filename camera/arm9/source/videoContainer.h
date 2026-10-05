@@ -34,6 +34,17 @@ constexpr u32 HEADER_SIZE = 64;
 constexpr u32 CHUNK_HEADER_SIZE = 16;
 constexpr u32 CHUNK_VIDEO = FOURCC('V', 'F', 'R', 'M');
 constexpr u32 CHUNK_AUDIO = FOURCC('A', 'U', 'D', 'I');
+constexpr u32 CHUNK_PAD = FOURCC('P', 'A', 'D', ' '); // filler so that writes start and end on SD sector boundaries; readers skip it
+
+// Sector-aligned layout (Phase 2C.1). Every write the recorder makes starts and ends on a 512-byte boundary of the
+// file: the first 512 bytes are the header plus a PAD chunk, a video slot is PAD + VFRM + frame = 98816 bytes
+// (193 sectors), an audio block is AUDI + PAD up to the next sector.
+constexpr u32 SECTOR = 512;
+constexpr u32 HEADER_BLOCK = SECTOR;
+constexpr u32 VIDEO_FRAME_OFFSET = SECTOR;										 // frame pixels inside a slot (32-byte aligned)
+constexpr u32 VIDEO_SLOT_BYTES = VIDEO_FRAME_OFFSET + 98304;					 // 98816 = 193 * 512
+constexpr u32 VIDEO_HEADER_OFFSET = VIDEO_FRAME_OFFSET - 16;					 // the VFRM chunk header sits right before the frame
+constexpr u32 AUDIO_BLOCK_EXTRA = 16 + 16 + SECTOR;							 // AUDI header + PAD header + worst-case padding
 
 constexpr u16 WIDTH = 256;
 constexpr u16 HEIGHT = 192;
@@ -117,6 +128,12 @@ class Writer {
 	// here, then header + payload go to the card in one sequential write.
 	bool writeVideo(u8 *chunk, u32 payloadBytes, u32 timeMs);
 	bool writeAudio(u8 *chunk, u32 payloadBytes, u32 timeMs);
+	// Sector-aligned variants. `slot` is a buffer of VIDEO_SLOT_BYTES whose frame is at slot + VIDEO_FRAME_OFFSET; the
+	// whole slot goes to the card in a single write. `block` has room for AUDIO_BLOCK_EXTRA + payloadBytes with the
+	// payload at block + 16; the AUDI chunk plus its PAD filler are written in a single write.
+	bool writeVideoSlot(u8 *slot, u32 timeMs);
+	bool writeAudioBlock(u8 *block, u32 payloadBytes, u32 timeMs);
+	u32 alignedWrites() const { return alignedCount; }
 	// Writes the index, patches the header and closes the file. Even if the index cannot be written (card full) the header
 	// is still patched with the counts, so the file stays readable by scanning.
 	bool finish(const Final &final);
@@ -137,6 +154,7 @@ class Writer {
 	Header header;
 	u32 position = 0;
 	u32 audioBytesWritten = 0;
+	u32 alignedCount = 0;
 	int err = 0;
 	std::vector<IndexEntry> index;
 };
