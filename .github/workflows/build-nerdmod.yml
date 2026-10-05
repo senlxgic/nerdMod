@@ -10,9 +10,55 @@ permissions:
   contents: read
 
 jobs:
+  weather:
+    name: Weather app (BlocksDS, DSWiFi DSi mode + Mbed TLS)
+    runs-on: ubuntu-latest
+    container:
+      image: skylyrac/blocksds:slim-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v5
+      - name: Install libraries
+        shell: bash
+        run: |
+          set -euxo pipefail
+          wf-pacman -Sy --noconfirm toolchain-gcc-arm-none-eabi-zlib blocksds-mbedtls
+          ls /opt/blocksds/core/libs /opt/blocksds/external || true
+          # Record the toolchain so the image tag can be pinned afterwards.
+          ls /opt/blocksds/core/*.txt 2>/dev/null | head || true
+          cat /opt/blocksds/core/version.txt 2>/dev/null || true
+      - name: Build weather.nds
+        shell: bash
+        run: |
+          set -euxo pipefail
+          make -C weather 2>&1 | tee weather-build.log
+          ls -l weather/weather.nds
+          echo "::notice title=weather-size::$(stat --printf='%s' weather/weather.nds) bytes weather.nds"
+      - name: Weather annotations
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          enc() { sed -e 's/%/%25/g' -e 's/\r//g' | sed -e 's/$/%0A/' | tr -d '\n'; }
+          if [ -f weather-build.log ]; then
+            E=$(grep -E 'error|Error|undefined reference|\*\*\*' weather-build.log | head -40 | enc)
+            [ -n "$E" ] && echo "::notice title=weather-errors::${E}"
+            W=$(grep 'warning:' weather-build.log | sed -E 's/^[^ ]*\/([^\/ ]+:[0-9]+:[0-9]+): /\1: /' | sort | uniq -c | head -25 | enc)
+            echo "::notice title=weather-warnings::${W:-none}"
+          fi
+          exit 0
+      - name: Upload weather.nds
+        uses: actions/upload-artifact@v4
+        with:
+          name: weather-nds
+          path: weather/weather.nds
+          if-no-files-found: error
+          retention-days: 14
+
   build:
     name: Build with devkitARM (pinned 20241104)
     runs-on: ubuntu-latest
+    needs: weather
 
     container:
       image: devkitpro/devkitarm:20241104
@@ -26,6 +72,12 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
+
+      - name: Fetch weather.nds from the BlocksDS lane
+        uses: actions/download-artifact@v4
+        with:
+          name: weather-nds
+          path: weather
 
       - name: Configure Git
         shell: bash
@@ -180,6 +232,7 @@ jobs:
           for f in \
             "_nds/TWiLightMenu/camera.srldr" \
             "_nds/TWiLightMenu/photos.srldr" \
+            "_nds/TWiLightMenu/weather.srldr" \
             "_nds/TWiLightMenu/dsimenu.srldr" \
             "_nds/TWiLightMenu/settings.srldr"; do
             if [ -s "7zfile/$f" ]; then
@@ -320,7 +373,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: nerdMod-phase2c1-${{ env.SHORT_SHA }}
+          name: nerdMod-phase2d-${{ env.SHORT_SHA }}
           path: |
             7zfile/
             SHA256SUMS.txt

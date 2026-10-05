@@ -22,6 +22,7 @@ package:
 	@$(MAKE) -C imageview dist
 	@$(MAKE) -C camera dist
 	@$(MAKE) -C photos dist
+	@if [ -f weather/weather.nds ]; then cp weather/weather.nds 7zfile/_nds/TWiLightMenu/weather.srldr; fi
 	@$(MAKE) -C resources
 	@$(MAKE) -C romsel_aktheme dist
 	@$(MAKE) -C romsel_dsimenutheme dist
@@ -122,6 +123,7 @@ clean:
 	@rm -rf "$(PACKAGE)/Multimedia/_nds/TWiLightMenu/imageview.srldr"
 	@rm -rf "$(PACKAGE)/_nds/TWiLightMenu/camera.srldr"
 	@rm -rf "$(PACKAGE)/_nds/TWiLightMenu/photos.srldr"
+	@rm -rf "$(PACKAGE)/_nds/TWiLightMenu/weather.srldr"
 	@rm -rf "$(PACKAGE)/_nds/TWiLightMenu/r4menu.srldr"
 	@rm -rf "$(PACKAGE)/_nds/TWiLightMenu/settings.srldr"
 	@rm -rf "$(PACKAGE)/_nds/TWiLightMenu/slot1launch.srldr"
