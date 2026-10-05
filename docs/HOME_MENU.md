@@ -6,7 +6,7 @@
 * Any size is accepted. Pictures larger than the 208x156 frame are scaled down to fit (aspect kept); smaller ones are centred.
 * If several pictures are present one is picked at random at every menu start. A file that cannot be read is skipped and the next one is tried; if none works the nds-bootstrap screenshot / built-in picture is used.
 * After a start of the menu, `sd:/_nds/nerdMod/photo-status.txt` says which folders were looked at, which pictures were found, which one is shown and why a picture was skipped.
-* The theme still controls the frame. "Show photo" in the settings and the theme's `RenderPhoto` switch it off.
+* Precedence (Phase 2C.1): "Show photo" OFF → no photo. "Show photo" ON → the photo is drawn even if the theme says `RenderPhoto=0` (a runtime override; the theme files are never changed and the theme keeps its own top background). Macro mode and the Saturn/HBL themes have no photo area.
 
 ## Tile context menu (UP on a tile; DSi and 3DS themes)
 | Tile | Entries |
@@ -32,4 +32,4 @@ NORMAL, MONO, SEPIA, NEGATIVE, COOL, WARM, POSTERIZE, HIGH CONTRAST, MIRROR. D-p
 * **Play Stats card (left of the photo).** Total play time, launches and games, from `sd:/_nds/nerdMod/playstats.ini`. Time is credited when the menu starts again after a game (RTC based; sessions over 12 h or with an unset/backwards clock count as 0). Switch: Settings > Home > Home Play Stats.
 * **Weather card (right of the photo).** Shows the cached reading, `--`, OFFLINE or SET PLACE. It never delays boot. No live update is possible in this build (see `docs/WEATHER.md`). Switches: Home Weather, Weather in Fahrenheit.
 * **Selected game caption.** Under the game art: launch count and play time.
-* The theme's `RenderPhoto` and "Show photo" still control the frame; the widgets only draw with it.
+* The widgets draw whenever the photo is shown (see the precedence above).
