@@ -35,4 +35,7 @@ inline u32 ticks() {
 // 33513982 Hz / 1024 = 32728.5 ticks per second
 inline u32 toMs(u32 tickDelta) { return (u32)(((u64)tickDelta * 1024000ull) / 33513982ull); }
 
+// microseconds (resolution about 30 us)
+inline u32 toUs(u32 tickDelta) { return (u32)(((u64)tickDelta * 1024000000ull) / 33513982ull); }
+
 } // namespace msclock

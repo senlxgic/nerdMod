@@ -229,6 +229,16 @@ def glyph_pause(d, cx, cy, col, size=10):
     for dx in (-5.5, 1.5):
         d.rounded_rectangle([S(cx + dx), S(cy - size), S(cx + dx + 4.4), S(cy + size)], radius=S(1.4), fill=col + (255,))
 
+def glyph_gear(d, cx, cy, col, r=8.5):
+    import math
+    for i in range(8):
+        a = math.radians(i * 45)
+        x0, y0 = cx + math.cos(a) * (r - 2), cy + math.sin(a) * (r - 2)
+        x1, y1 = cx + math.cos(a) * (r + 2.2), cy + math.sin(a) * (r + 2.2)
+        d.line([(S(x0), S(y0)), (S(x1), S(y1))], fill=col + (255,), width=S(3.6))
+    d.ellipse([S(cx - r), S(cy - r), S(cx + r), S(cy + r)], fill=col + (255,))
+    d.ellipse([S(cx - r * 0.42), S(cy - r * 0.42), S(cx + r * 0.42), S(cy + r * 0.42)], fill=(255, 255, 255, 240))
+
 def glyph_camera(d, cx, cy, col, scale=1.0):
     k = scale
     d.rounded_rectangle([S(cx - 9 * k), S(cy - 5 * k), S(cx + 9 * k), S(cy + 7 * k)], radius=S(2.4 * k), fill=col + (255,))
@@ -293,6 +303,21 @@ def pill_button(bg, x, y, w, h, glyph, label, pressed=False):
     glyph(d, 17, h / 2 + off, TEAL_TEXT)
     layers.append(lay)
     layers.append(text_layer(w, h, (w / 2 + 8, h / 2 + off), label, 10.5, TEAL_TEXT, anchor="mm"))
+    return finish(base, layers, w, h)
+
+def row_button(bg, x, y, w, h, glyph=None, label=None):
+    base = crop_bg(bg, x, y, w, h)
+    mask = rr_mask(w, h, 2, 2, w - 2, h - 3, h / 2 - 2)
+    layers = [drop_shadow(mask, w, h, 0, 1.2, 1.4, 0.40)]
+    layers += glass_shape(w, h, mask, (255, 255, 255), (170, 230, 250), rim_alpha=235, gloss=0.5)
+    if glyph or label:
+        lay = canvas(w, h)
+        d = ImageDraw.Draw(lay)
+        if glyph:
+            glyph(d, 14, h / 2, TEAL_TEXT)
+        layers.append(lay)
+        if label:
+            layers.append(text_layer(w, h, (w / 2 + (7 if glyph else 0), h / 2), label, 10, TEAL_TEXT, anchor="mm"))
     return finish(base, layers, w, h)
 
 def shutter(bg, x, y, size, kind, pressed=False, glowing=False):
@@ -594,6 +619,7 @@ def main():
         prev=(4, 70, 56, 62), play=(68, 70, 56, 62), delete=(132, 70, 56, 62), next=(196, 70, 56, 62),
         dialog=(24, 44, 208, 104),
         dlg_yes=(40, 108, 84, 30), dlg_no=(132, 108, 84, 30),
+        gear=(8, 33, 64, 22), fps=(184, 33, 64, 22), row=(20, 32, 216, 22),
     )
     # title in the bar
     bar = canvas(256, 192)
@@ -659,6 +685,18 @@ def main():
     pack.add("SPR_RECPLATE", sprite_rec_plate(), dither=False)
     pack.add("SPR_RECDOT", sprite_rec_dot(), dither=False)
     pack.add("DIGITS", digits_atlas(), dither=False)
+
+    # Phase 2D: settings gear, FPS pills and settings-menu rows (appended so the earlier ids stay stable)
+    x, y, w, h = L["gear"]
+    pack.add("BTN_GEAR", row_button(bg, x, y, w, h, lambda d, cx, cy, c: glyph_gear(d, cx, cy, c, 6.5), "SET"))
+    pack.add("BTN_GEAR_P", pill_button(bg, x, y, w, h, lambda d, cx, cy, c: glyph_gear(d, cx, cy, c, 6.5), "SET", pressed=True))
+    x, y, w, h = L["fps"]
+    for f in (10, 15, 20, 30):
+        pack.add("BTN_FPS%d" % f, row_button(bg, x, y, w, h, None, "FPS: %d" % f))
+    pack.add("BTN_FPS_P", pill_button(bg, x, y, w, h, lambda d, cx, cy, c: None, "FPS", pressed=True))
+    x, y, w, h = L["row"]
+    for i in range(5):
+        pack.add("ROW%d" % i, row_button(bg, x, y + 24 * i, w, h))
 
     # ---- write bin + header
     blob = bytearray()

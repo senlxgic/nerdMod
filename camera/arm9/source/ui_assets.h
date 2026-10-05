@@ -46,6 +46,18 @@ enum UiId {
 	UI_SPR_RECPLATE = 38,
 	UI_SPR_RECDOT = 39,
 	UI_DIGITS = 40,
+	UI_BTN_GEAR = 41,
+	UI_BTN_GEAR_P = 42,
+	UI_BTN_FPS10 = 43,
+	UI_BTN_FPS15 = 44,
+	UI_BTN_FPS20 = 45,
+	UI_BTN_FPS30 = 46,
+	UI_BTN_FPS_P = 47,
+	UI_ROW0 = 48,
+	UI_ROW1 = 49,
+	UI_ROW2 = 50,
+	UI_ROW3 = 51,
+	UI_ROW4 = 52,
 	UI_COUNT
 };
 
@@ -91,6 +103,18 @@ static const UiImage UI_IMAGES[UI_COUNT] = {
 	{221112, 64, 32}, // SPR_RECPLATE
 	{223160, 16, 16}, // SPR_RECDOT
 	{223416, 88, 12}, // DIGITS
+	{224472, 64, 22}, // BTN_GEAR
+	{225880, 64, 22}, // BTN_GEAR_P
+	{227288, 64, 22}, // BTN_FPS10
+	{228696, 64, 22}, // BTN_FPS15
+	{230104, 64, 22}, // BTN_FPS20
+	{231512, 64, 22}, // BTN_FPS30
+	{232920, 64, 22}, // BTN_FPS_P
+	{234328, 216, 22}, // ROW0
+	{239080, 216, 22}, // ROW1
+	{243832, 216, 22}, // ROW2
+	{248584, 216, 22}, // ROW3
+	{253336, 216, 22}, // ROW4
 };
 
 // Bottom-screen layout (x, y, w, h)
@@ -107,3 +131,6 @@ static const UiImage UI_IMAGES[UI_COUNT] = {
 #define UI_RECT_DIALOG 24, 44, 208, 104
 #define UI_RECT_DLG_YES 40, 108, 84, 30
 #define UI_RECT_DLG_NO 132, 108, 84, 30
+#define UI_RECT_GEAR 8, 33, 64, 22
+#define UI_RECT_FPS 184, 33, 64, 22
+#define UI_RECT_ROW 20, 32, 216, 22

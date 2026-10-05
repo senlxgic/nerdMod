@@ -46,4 +46,8 @@ int minSample();
 int maxSample();
 int meanSample();
 
+// Phase 2D: the sample rate the capture actually runs at, and which capture path is active ("libnds", "ndma", "none").
+u32 sampleRate();
+const char *pathName();
+
 } // namespace audioRec

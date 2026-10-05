@@ -10,3 +10,4 @@ test_net
 test_photopolicy
 test_reclog
 test_weather
+test_sdbench

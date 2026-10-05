@@ -75,6 +75,9 @@ int slotCount();
 const reclog::RecLog &lastRecLog();
 bool writeLogFile();
 
+// Human readable name of the container/frame format the recorder writes.
+const char *formatName();
+
 std::string videoFolder();
 bool ensureVideoFolder();
 

@@ -33,6 +33,7 @@
 #include "audioPlayer.h"
 #include "reclog.h"
 #include "sdbench.h"
+#include "settings.h"
 #include "gallery.h"
 #include "filters.h"
 #include "photos.h"
@@ -57,7 +58,7 @@ namespace {
 
 bool exitRequested = false;
 
-enum { B_SHUTTER = 1, B_ALBUM, B_FLIP, B_BACK, B_MODE, B_OK };
+enum { B_SHUTTER = 1, B_ALBUM, B_FLIP, B_BACK, B_MODE, B_OK, B_SETTINGS, B_FPS };
 
 //---------------------------------------------------------------- leaving
 
@@ -112,18 +113,32 @@ enum { B_SHUTTER = 1, B_ALBUM, B_FLIP, B_BACK, B_MODE, B_OK };
 	stopForever();
 }
 
+int fpsPillImage(int fps) {
+	switch (fps) {
+		case 15: return UI_BTN_FPS15;
+		case 20: return UI_BTN_FPS20;
+		case 30: return UI_BTN_FPS30;
+		default: return UI_BTN_FPS10;
+	}
+}
+
 void showCameraButtons(bool videoMode, bool recording, bool glow = false) {
 	const int shutterN = recording ? (glow ? UI_SHUTTER_REC_GLOW : UI_SHUTTER_REC) : (videoMode ? UI_SHUTTER_VIDEO : UI_SHUTTER_PHOTO);
 	const int shutterP = recording ? UI_SHUTTER_REC_P : (videoMode ? UI_SHUTTER_VIDEO_P : UI_SHUTTER_PHOTO_P);
-	const UiButton list[] = {
+	UiButton list[7] = {
 		{B_SHUTTER, UI_RECT_SHUTTER, shutterN, shutterP, true},
 		{B_ALBUM, UI_RECT_ALBUM, UI_BTN_ALBUM, UI_BTN_ALBUM_P, !recording},
 		{B_FLIP, UI_RECT_FLIP, UI_BTN_FLIP, UI_BTN_FLIP_P, !recording},
 		{B_BACK, UI_RECT_BACK, UI_BTN_BACK, UI_BTN_BACK_P, true},
 		{B_MODE, UI_RECT_CAPSULE, videoMode ? UI_CAPSULE_VIDEO : UI_CAPSULE_PHOTO, -1, !recording},
+		{B_SETTINGS, UI_RECT_GEAR, UI_BTN_GEAR, UI_BTN_GEAR_P, !recording},
 	};
+	int n = 6;
+	// the tappable frame-rate pill only exists in video mode, and not while recording
+	if (videoMode && !recording)
+		list[n++] = {B_FPS, UI_RECT_FPS, fpsPillImage(rec::fps()), UI_BTN_FPS_P, true};
 	uiBottomDrawBackground();
-	uiShowButtons(list, 5);
+	uiShowButtons(list, n);
 }
 
 //---------------------------------------------------------------- error screen
@@ -216,10 +231,7 @@ const char *takePhoto(int &frontPage) {
 	return result;
 }
 
-//---------------------------------------------------------------- recording info / diagnostics
-
-rec::Result lastRecording;
-bool haveLastRecording = false;
+//---------------------------------------------------------------- recording info
 
 const char *fpsWord(int fps) {
 	switch (fps) {
@@ -230,171 +242,8 @@ const char *fpsWord(int fps) {
 	}
 }
 
-// The recording log of the last attempt: this session's, else what the previous session left on the card.
-reclog::RecLog viewLog() {
-	reclog::RecLog v = rec::lastRecLog();
-	if (v.result[0])
-		return v;
-	static char text[2600];
-	FILE *f = fopen((rec::videoFolder() + "/last-recording.txt").c_str(), "rb");
-	if (f) {
-		const size_t n = fread(text, 1, sizeof(text) - 1, f);
-		fclose(f);
-		text[n] = 0;
-		reclog::parse(text, v);
-	}
-	return v;
-}
-
-sdbench::Report benchReport;
-bool haveBench = false;
-
-void benchProgress(const char *name) {
-	char line[40];
-	uiTextAt(4, 12, "                       ");
-	snprintf(line, sizeof(line), "Testing %s...", name);
-	uiTextAt(4, 12, line);
-}
-
-// Full-screen dialog (A / D-pad switch pages, B closes). Pages: 0 last video, 1 SD card, 2 microphone, 3 tools
-// (X = SD speed test, Y = test tone), 4 SD speed test results. Everything shown is also in last-recording.txt.
-void showInfoDialog(int page) {
-	uiClearButtons();
-	const UiButton ok[] = {{B_OK, UI_RECT_BACK, UI_BTN_BACK, UI_BTN_BACK_P, true}};
-	reclog::RecLog v = viewLog();
-	const int pageCount = 5;
-	char toneLine[28] = "";
-	bool redraw = true;
-	while (!exitRequested) {
-		if (redraw) {
-			redraw = false;
-			uiTextClear();
-			uiBottomDrawBackground();
-			uiDrawDialogPanel();
-			uiShowButtons(ok, 1);
-			char line[40];
-			int row = 8;
-			auto put = [&](const char *fmt, auto... args) {
-				snprintf(line, sizeof(line), fmt, args...);
-				uiTextAt(4, row++, line);
-			};
-			const bool have = v.result[0] != 0;
-			const u32 afps = reclog::fpsX100(v.captured_frames, v.duration_ms);
-			if (page == 0) {
-				uiTextCentred(6, "Last video");
-				if (!have) {
-					uiTextCentred(9, "No video yet");
-				} else {
-					put("Req %u  Act %u.%02u FPS", (unsigned)v.requested_fps, (unsigned)(afps / 100), (unsigned)(afps % 100));
-					put("Frames %u  Drop %u", (unsigned)v.captured_frames, (unsigned)v.dropped_frames);
-					put("Camera gave %u frames", (unsigned)v.camera_frames_seen);
-					put("Buffers %u of %u", (unsigned)v.buffer_peak, (unsigned)v.buffer_slots);
-					put("%u s  (clock %u s)", (unsigned)((v.duration_ms + 500) / 1000), (unsigned)v.rtc_seconds);
-					put("%s", v.result);
-				}
-			} else if (page == 1) {
-				uiTextCentred(6, "SD card");
-				if (!have) {
-					uiTextCentred(9, "No video yet");
-				} else {
-					const u32 mbs = reclog::mbPerSecX100(v.sd_bytes, v.sd_total_write_ms);
-					put("Writes %u (V%u A%u)", (unsigned)v.sd_write_count, (unsigned)v.sd_video_writes, (unsigned)v.sd_audio_writes);
-					put("Avg %u ms   Max %u ms", (unsigned)v.sd_avg_write_ms, (unsigned)v.sd_max_write_ms);
-					put("Over 250 ms: %u", (unsigned)v.sd_slow_writes_250ms);
-					put("Speed %u.%02u MB/s", (unsigned)(mbs / 100), (unsigned)(mbs % 100));
-					put("Aligned %u of %u", (unsigned)v.aligned_writes, (unsigned)v.sd_write_count);
-					put("Stop: %s", v.stop_reason);
-				}
-			} else if (page == 2) {
-				uiTextCentred(6, "Microphone");
-				if (!have) {
-					uiTextCentred(9, "No video yet");
-				} else {
-					const char *cls = v.mic_class;
-					if (!strncmp(cls, "MIC_", 4))
-						cls += 4;
-					put("%s", cls);
-					put("Init %d  Calls %u", (int)v.audio_init, (unsigned)v.audio_callbacks);
-					put("Samples %u", (unsigned)v.audio_samples);
-					put("Peak %u  Mean %d", (unsigned)v.audio_peak, (int)v.audio_mean);
-					put("Chunks %u  Fail %u", (unsigned)v.audio_chunks, (unsigned)v.audio_failed);
-				}
-			} else if (page == 3) {
-				uiTextCentred(6, "Tools");
-				put("%s", "X: SD speed test");
-				put("%s", "Y: play test tone");
-				put("%s", "Log on the card:");
-				put("%s", "videos/last-recording.txt");
-				if (toneLine[0])
-					put("%s", toneLine);
-			} else {
-				uiTextCentred(6, "SD speed test");
-				if (!haveBench) {
-					uiTextCentred(9, "Press X on Tools");
-				} else {
-					for (int i = 0; i < benchReport.count; i++) {
-						const sdbench::Row &r = benchReport.rows[i];
-						const u32 m = sdbench::mbPerSecX100(r);
-						put("%s %u.%02uMB/s mx%u", r.name, (unsigned)(m / 100), (unsigned)(m % 100), (unsigned)r.maxMs);
-					}
-					put("sd-benchmark.txt saved");
-				}
-			}
-			char foot[32];
-			snprintf(foot, sizeof(foot), "A: page %d/%d", page + 1, pageCount);
-			uiTextAt(4, 15, foot);
-		}
-		scanKeys();
-		const u32 down = keysDown(), up = keysUp();
-		const int touched = uiHandleInput(down, up);
-		uiTick();
-		if ((down & KEY_B) || touched == B_OK || appPowerExitRequested())
-			break;
-		if (down & (KEY_A | KEY_RIGHT)) {
-			page = (page + 1) % pageCount;
-			redraw = true;
-		} else if (down & KEY_LEFT) {
-			page = (page + pageCount - 1) % pageCount;
-			redraw = true;
-		} else if ((down & KEY_X) && !rec::active()) {
-			page = 3;
-			uiTextClear();
-			uiBottomDrawBackground();
-			uiDrawDialogPanel();
-			uiTextCentred(6, "SD speed test");
-			uiTextCentred(9, "Please wait...");
-			sdbench::run(benchReport, benchProgress);
-			haveBench = true;
-			page = 4;
-			redraw = true;
-		} else if (down & KEY_Y) {
-			if (audioPlay::startTone()) {
-				snprintf(toneLine, sizeof(toneLine), "Tone: playing...");
-				page = 3;
-				redraw = true;
-				for (int i = 0; i < 90 && !exitRequested; i++) {
-					if (i == 1) {
-						// redraw now that the tone started
-						uiTextClear();
-						uiBottomDrawBackground();
-						uiDrawDialogPanel();
-						uiTextCentred(6, "Tools");
-						uiTextCentred(9, "Playing 1 kHz test tone");
-						uiTextCentred(11, "Do you hear a beep?");
-					}
-					swiWaitForVBlank();
-				}
-				audioPlay::stop();
-				snprintf(toneLine, sizeof(toneLine), "Tone: played (heard?)");
-			} else {
-				snprintf(toneLine, sizeof(toneLine), "Tone: channel FAILED");
-			}
-			page = 3;
-			redraw = true;
-		}
-		swiWaitForVBlank();
-	}
-}
+rec::Result lastRecording;
+bool haveLastRecording = false;
 
 const char *messageForStop(const rec::Result &r) {
 	if (!r.saved)
@@ -474,7 +323,8 @@ void cameraMode() {
 		if (r.frames > 0) {
 			lastRecording = r;
 			haveLastRecording = true;
-			showInfoDialog(0);
+			if (camset::recordingSummary() == camset::Exit::Power)
+				exitRequested = true;
 			restoreCameraScreen();
 			setMessage(messageForStop(r));
 		}
@@ -587,7 +437,7 @@ void cameraMode() {
 				uiPressFeedback(action);
 		}
 
-		// ---- START: video frame rate (video mode) / diagnostics (photo mode)
+		// ---- START: video frame rate shortcut (video mode) / Camera Settings (photo mode)
 		if (!rec::active() && action < 0 && (down & KEY_START)) {
 			if (videoMode) {
 				const int next = fpsutil::next(rec::fps());
@@ -596,12 +446,9 @@ void cameraMode() {
 				static char fpsMsg[24];
 				snprintf(fpsMsg, sizeof(fpsMsg), "%d %s %dMB/min", next, fpsWord(next), fpsutil::mbPerMinute(next));
 				setMessage(fpsMsg);
+				showCameraButtons(videoMode, false);
 			} else {
-				waitTransferIdle(30);
-				cameraTransferStop();
-				inFlight = false;
-				showInfoDialog(0);
-				restoreCameraScreen();
+				action = B_SETTINGS;
 			}
 		}
 
@@ -688,6 +535,23 @@ void cameraMode() {
 			}
 			uiTopSetCamera(cam == CAM_INNER);
 			uiTopFade(false, 4);
+		} else if ((action == B_SETTINGS || action == B_FPS) && !rec::active()) {
+			waitTransferIdle(30);
+			cameraTransferStop();
+			inFlight = false;
+			camset::Exit e = camset::Exit::Back;
+			if (action == B_FPS)
+				e = camset::chooseFps(nullptr);
+			else
+				e = camset::run();
+			if (e == camset::Exit::Power) {
+				exitRequested = true;
+				break;
+			}
+			uiTextClear();
+			showCameraButtons(videoMode, false);
+			lastStatus = "";
+			setIdleStatus(idleLabel());
 		} else if (action == B_ALBUM && !rec::active()) {
 			waitTransferIdle(30);
 			cameraTransferStop();

@@ -25,6 +25,7 @@ u32 fed = 0;
 bool attempted = false;
 bool startedOk = false;
 bool toneMode = false;
+const char *errText = "ok";
 
 u32 consumed() { return s0 + msclock::toMs(msclock::ticks() - startTicks) * audioring::BYTES_PER_MS; }
 
@@ -36,10 +37,13 @@ bool start(u32 startMs) {
 	startedOk = false;
 	toneMode = false;
 	soundEnable(); // powers the sound hardware and sets the master volume; the Camera's ARM7 leaves it at 0 until asked
+	errText = "ok";
 	if (!ring)
 		ring = (u8 *)memalign(32, RING_BYTES);
-	if (!ring)
+	if (!ring) {
+		errText = "no memory";
 		return false;
+	}
 	memset(ring, 0, RING_BYTES);
 	DC_FlushRange(ring, RING_BYTES);
 	s0 = startMs * audioring::BYTES_PER_MS;
@@ -48,6 +52,7 @@ bool start(u32 startMs) {
 	startTicks = msclock::ticks();
 	channel = soundPlaySample(ring, SoundFormat_16Bit, RING_BYTES, RATE, 127, 64, true, 0);
 	if (channel < 0) {
+		errText = "no free channel";
 		free(ring);
 		ring = nullptr;
 		return false;
@@ -63,10 +68,13 @@ bool startTone() {
 	startedOk = false;
 	toneMode = true;
 	soundEnable();
+	errText = "ok";
 	if (!ring)
 		ring = (u8 *)memalign(32, RING_BYTES);
-	if (!ring)
+	if (!ring) {
+		errText = "no memory";
 		return false;
+	}
 	audiofmt::fillTone((int16_t *)ring, RING_BYTES / 2, 1000, RATE, 16000); // 4096 whole periods: the loop is seamless
 	DC_FlushRange(ring, RING_BYTES);
 	s0 = 0;
@@ -74,6 +82,7 @@ bool startTone() {
 	startTicks = msclock::ticks();
 	channel = soundPlaySample(ring, SoundFormat_16Bit, RING_BYTES, RATE, 127, 64, true, 0);
 	if (channel < 0) {
+		errText = "no free channel";
 		free(ring);
 		ring = nullptr;
 		return false;
@@ -142,5 +151,7 @@ bool startAttempted() { return attempted; }
 bool startSucceeded() { return startedOk; }
 u32 positionMs() { return channel >= 0 ? (consumed() / audioring::BYTES_PER_MS) : 0; }
 u32 lateChunks() { return late; }
+const char *lastError() { return errText; }
+int channelId() { return channel; }
 
 } // namespace audioPlay

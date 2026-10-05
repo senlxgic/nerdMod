@@ -33,5 +33,8 @@ void resetStats();
 u32 chunksFed();
 bool startAttempted();
 bool startSucceeded();
+// Phase 2D: why the last start()/startTone() failed ("ok" when it did not), and the hardware channel in use (-1 = none).
+const char *lastError();
+int channelId();
 
 } // namespace audioPlay

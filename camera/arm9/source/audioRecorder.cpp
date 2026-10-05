@@ -131,6 +131,8 @@ int minSample() { return stats.samples ? stats.minV : 0; }
 int maxSample() { return stats.samples ? stats.maxV : 0; }
 int meanSample() { return audiofmt::mean(stats); }
 bool wasOffsetBinary() { return offsetBinary; }
+u32 sampleRate() { return SAMPLE_RATE; }
+const char *pathName() { return active ? "libnds" : "none"; }
 int startStatus() { return startResult; }
 u32 overrunBytes() { return overrun; }
 

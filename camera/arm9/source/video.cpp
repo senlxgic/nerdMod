@@ -189,6 +189,8 @@ const char *stopReasonName(StopReason r) {
 } // namespace
 
 // =================================================================================================
+const char *formatName() { return "NERDVID1-RGB555-A512"; }
+
 std::string videoFolder() { return deviceRoot() + "/_nds/nerdMod/videos"; }
 
 bool ensureVideoFolder() {
