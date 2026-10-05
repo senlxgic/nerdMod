@@ -13,3 +13,5 @@ test_weather
 test_sdbench
 test_resample
 test_container_v2
+test_weather_app
+test_wdraw

@@ -1,7 +1,7 @@
 /*
 	nerdMod networking core: a non-blocking plain-HTTP/1.1 GET client over an abstract Transport.
 
-	Why a Transport: the Wi-Fi stack is a platform thing (see docs/WEATHER.md - in DSi mode there is no usable Wi-Fi driver in
+	Why a Transport: the Wi-Fi stack is a platform thing (see docs/WEATHER.md - the Weather app uses DSWiFi in DSi mode, the menu has none
 	this toolchain), while everything above it - URL handling, request text, response parsing (Content-Length, chunked,
 	read-until-close), size caps, timeout, cancellation - is plain code that can be tested on a PC with a mock Transport.
 	A platform provides one Transport; until then `UnavailableTransport` reports "no network" and callers fall back to
@@ -27,7 +27,8 @@ struct Url {
 	int port = 80;
 };
 
-inline Url parseUrl(const char *u) {
+// allowTls: accept "https://" (port 443); the transport must then really do TLS with certificate checks. Default: refused.
+inline Url parseUrl(const char *u, bool allowTls = false) {
 	Url r;
 	if (!u)
 		return r;
@@ -36,7 +37,10 @@ inline Url parseUrl(const char *u) {
 		p += 7;
 	else if (strncmp(p, "https://", 8) == 0) {
 		r.tls = true;
-		return r; // refused: no TLS available
+		if (!allowTls)
+			return r; // refused: this transport has no TLS
+		r.port = 443;
+		p += 8;
 	} else
 		return r;
 	const char *hostEnd = p;
@@ -78,7 +82,7 @@ inline Url parseUrl(const char *u) {
 
 inline std::string buildGet(const Url &u) {
 	std::string s = "GET " + u.path + " HTTP/1.1\r\nHost: " + u.host;
-	if (u.port != 80)
+	if (u.port != (u.tls ? 443 : 80))
 		s += ":" + std::to_string(u.port);
 	s += "\r\nUser-Agent: nerdMod/1\r\nAccept: application/json\r\nConnection: close\r\n\r\n";
 	return s;
@@ -89,7 +93,8 @@ class ResponseParser {
   public:
 	enum State { HEADERS, BODY_LENGTH, BODY_CHUNK_SIZE, BODY_CHUNK_DATA, BODY_CHUNK_CRLF, BODY_UNTIL_CLOSE, DONE, ERROR };
 	static constexpr size_t MAX_HEADER = 2048;
-	static constexpr size_t MAX_BODY = 4096;
+	static constexpr size_t MAX_BODY = 4096; // default cap; setMaxBody() raises it (the Weather app reads up to 12 KB)
+	void setMaxBody(size_t n) { maxBody = n; }
 
 	State state() const { return st; }
 	int status() const { return code; }
@@ -114,7 +119,7 @@ class ResponseParser {
   private:
 	void fail() { st = ERROR; }
 	void addBody(char c) {
-		if (bodyText.size() >= MAX_BODY) {
+		if (bodyText.size() >= maxBody) {
 			fail();
 			return;
 		}
@@ -159,7 +164,7 @@ class ResponseParser {
 		else if (contentLength == 0)
 			st = DONE;
 		else if (contentLength > 0) {
-			if ((size_t)contentLength > MAX_BODY) {
+			if ((size_t)contentLength > maxBody) {
 				fail();
 				return;
 			}
@@ -231,6 +236,7 @@ class ResponseParser {
 
 	State st = HEADERS;
 	std::string head, bodyText;
+	size_t maxBody = MAX_BODY;
 	int code = 0;
 	long contentLength = -1, remaining = 0;
 	bool chunked = false, sizeSeen = false, ext = false;

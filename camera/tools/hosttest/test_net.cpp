@@ -66,6 +66,20 @@ int main() {
 	{ UnavailableTransport ut; Request r(ut); uint32_t t = 0; r.start("http://h/x", t, 5000); CHECK(r.status() == Request::UNAVAILABLE); }
 	// clock wrap-around does not time out early
 	{ Mock m; m.reply = "HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\nx"; Request r(m); uint32_t t = 0xFFFFFF00u; r.start("http://h/x", t, 5000); CHECK(run(r, t) == Request::DONE); }
+	// Phase 2D: TLS URLs are accepted only when asked for; port 443 is the default; the response cap can be raised
+	{
+		Url u = parseUrl("https://api.open-meteo.com/v1/forecast?x=1", true);
+		CHECK(u.ok && u.tls && u.port == 443 && u.host == "api.open-meteo.com" && u.path == "/v1/forecast?x=1");
+		CHECK(buildGet(u).find("Host: api.open-meteo.com\r\n") != std::string::npos);
+		CHECK(parseUrl("https://h:8443/", true).port == 8443 && buildGet(parseUrl("https://h:8443/", true)).find("Host: h:8443") != std::string::npos);
+		CHECK(!parseUrl("https://h/", false).ok && !parseUrl("ftp://h/", true).ok);
+		ResponseParser rp; rp.setMaxBody(20000);
+		std::string big = "HTTP/1.1 200 OK\r\nContent-Length: 9000\r\n\r\n" + std::string(9000, 'x');
+		rp.feed(big.data(), big.size());
+		CHECK(rp.done() && rp.body().size() == 9000);
+		ResponseParser small; small.feed(big.data(), big.size());
+		CHECK(small.failed());
+	}
 	printf(failures ? "%d FAILURES\n" : "net tests OK\n", failures);
 	return failures;
 }
