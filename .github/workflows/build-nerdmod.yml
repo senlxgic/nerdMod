@@ -31,7 +31,7 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          make -C weather 2>&1 | tee weather-build.log
+          make -k -C weather 2>&1 | tee weather-build.log
           ls -l weather/weather.nds
           echo "::notice title=weather-size::$(stat --printf='%s' weather/weather.nds) bytes weather.nds"
       - name: Weather annotations

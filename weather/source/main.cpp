@@ -328,7 +328,7 @@ bool chooseCity() {
 // ---- network test ---------------------------------------------------------------------------------------------------------
 void networkTest() {
 	while (true) {
-		TestLine lines[6];
+		wd::TestLine lines[6];
 		memset(lines, 0, sizeof lines);
 		const char *names[6] = {"WI-FI", "IP ADDRESS", "DNS", "SECURE LINK", "WEATHER DATA", "CLOCK"};
 		for (int i = 0; i < 6; i++) {
