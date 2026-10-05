@@ -373,7 +373,7 @@ void networkTest() {
 				snprintf(lines[3].result, sizeof lines[3].result, "%s CERT VERIFIED", info.tls);
 			} else if (e == net::E_CERT) {
 				lines[3].state = 2;
-				snprintf(lines[3].result, sizeof lines[3].result, "%s", info.verify[0] ? info.verify : "certificate refused");
+				snprintf(lines[3].result, sizeof lines[3].result, "%.40s", info.verify[0] ? info.verify : "certificate refused");
 			} else if (e == net::E_TLS || e == net::E_TIMEOUT) {
 				lines[3].state = 2;
 				snprintf(lines[3].result, sizeof lines[3].result, "handshake failed (%d)", info.tlsError);

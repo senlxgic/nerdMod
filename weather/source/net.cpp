@@ -29,6 +29,12 @@ namespace net {
 
 namespace {
 
+// DSWiFi does not export inet_ntoa; s_addr is in network byte order, so the first octet is the low byte.
+void dotted(char *out, size_t cap, uint32_t addr) {
+	snprintf(out, cap, "%u.%u.%u.%u", (unsigned)(addr & 255), (unsigned)((addr >> 8) & 255), (unsigned)((addr >> 16) & 255), (unsigned)(addr >> 24));
+}
+
+
 constexpr int FPS = 60;
 constexpr int WIFI_TIMEOUT_FRAMES = 25 * FPS;
 constexpr int CONNECT_TIMEOUT_FRAMES = 12 * FPS;
@@ -141,7 +147,7 @@ Err wifiUp(Tick tick, void *ctx, Info &info) {
 	wifiConnected = true;
 	struct in_addr a;
 	a.s_addr = Wifi_GetIP();
-	snprintf(info.ip, sizeof info.ip, "%s", inet_ntoa(a));
+	dotted(info.ip, sizeof info.ip, a.s_addr);
 	return E_OK;
 }
 
@@ -180,7 +186,7 @@ Err httpsGet(const char *url, size_t maxBody, std::string &body, Tick tick, void
 		return E_DNS;
 	{
 		struct sockaddr_in *sin = (struct sockaddr_in *)c.addr->ai_addr;
-		snprintf(info.serverIp, sizeof info.serverIp, "%s", inet_ntoa(sin->sin_addr));
+		dotted(info.serverIp, sizeof info.serverIp, sin->sin_addr.s_addr);
 	}
 
 	// ---- TCP, non-blocking so that the user can cancel and the time limit holds
